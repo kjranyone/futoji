@@ -1,0 +1,675 @@
+import 'dart:io';
+import 'dart:isolate';
+
+import 'package:camera/camera.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:provider/provider.dart';
+
+import '../models/crop_result.dart';
+import '../models/music_document.dart';
+import '../services/auto_capture.dart';
+import '../services/detection_worker.dart';
+import '../services/detector.dart';
+import '../services/paper_net.dart';
+import '../state/app_state.dart';
+import '../widgets/dialogs.dart';
+import 'crop_screen.dart';
+
+/// 読み取り画面。
+///
+/// - プレビュー中も常駐 isolate で紙面四隅をリアルタイム検出しオーバーレイ表示
+/// - 自動撮影モード: 紙面が安定したら自動シャッター → 切り抜きをスキップして直接保存
+/// - 手動シャッターは従来通り切り抜き画面で調整して保存
+class CameraScreen extends StatefulWidget {
+  const CameraScreen({super.key, required this.document});
+
+  final MusicDocument document;
+
+  @override
+  State<CameraScreen> createState() => _CameraScreenState();
+}
+
+class _CameraScreenState extends State<CameraScreen>
+    with WidgetsBindingObserver {
+  CameraController? _controller;
+  List<CameraDescription> _cameras = const <CameraDescription>[];
+  int _cameraIndex = 0;
+  int _sensorOrientation = 90;
+  FlashMode _flash = FlashMode.off;
+
+  bool _permissionDenied = false;
+  bool _starting = false;
+  bool _busy = false; // 撮影〜保存中
+  String? _error;
+  int _savedCount = 0;
+
+  // ---- ライブ検出 ----
+  final DetectionWorker _worker = DetectionWorker();
+  DateTime _lastFrameAt = DateTime.fromMillisecondsSinceEpoch(0);
+  int _liveFrameW = 0;
+  int _liveFrameH = 0;
+  double _previewBoxAspect = 0;
+
+  /// オーバーレイ表示 (プレビュー正規化座標 + 色)
+  final ValueNotifier<LiveOverlay> _live =
+      ValueNotifier<LiveOverlay>(const LiveOverlay());
+
+  // ---- 自動撮影 ----
+  bool _autoMode = false;
+  final AutoCaptureController _auto = AutoCaptureController();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _loadNetAndStartWorker();
+    _bootstrap();
+  }
+
+  /// net モデル (アセット) を読み込みワーカーを起動する。
+  Future<void> _loadNetAndStartWorker() async {
+    try {
+      final bytes = (await rootBundle.load('assets/models/paper_seg.onnx'))
+          .buffer
+          .asUint8List();
+      await _worker.start(bytes);
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('PaperNet worker start failed: \$e');
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _controller?.dispose();
+    _worker.dispose();
+    _live.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive) {
+      final controller = _controller;
+      if (controller == null || !controller.value.isInitialized) return;
+      controller.dispose();
+      _controller = null;
+      if (mounted) setState(() {});
+    } else if (state == AppLifecycleState.resumed) {
+      // inactive で破棄済み (= null) なので、ここでは null のときに再起動する
+      if (_controller != null || _cameras.isEmpty || _permissionDenied) return;
+      _startController(_cameraIndex);
+    }
+  }
+
+  Future<void> _bootstrap() async {
+    final status = await Permission.camera.request();
+    if (status.isDenied || status.isPermanentlyDenied) {
+      if (mounted) setState(() => _permissionDenied = true);
+      return;
+    }
+    try {
+      _cameras = await availableCameras();
+    } catch (e) {
+      if (mounted) setState(() => _error = 'カメラを取得できませんでした: $e');
+      return;
+    }
+    if (_cameras.isEmpty) {
+      if (mounted) setState(() => _error = '利用できるカメラがありません');
+      return;
+    }
+    // 背面カメラを優先
+    int index = 0;
+    for (int i = 0; i < _cameras.length; i++) {
+      if (_cameras[i].lensDirection == CameraLensDirection.back) {
+        index = i;
+        break;
+      }
+    }
+    if (mounted) setState(() => _cameraIndex = index);
+    await _startController(index);
+  }
+
+  Future<void> _startController(int index) async {
+    if (_starting) return;
+    _starting = true;
+    final old = _controller;
+    _controller = null;
+    if (mounted) setState(() {});
+    await old?.dispose();
+
+    try {
+      final controller = CameraController(
+        _cameras[index],
+        ResolutionPreset.max,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+      await controller.initialize();
+      await controller.setFlashMode(_flash);
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() {
+        _controller = controller;
+        _error = null;
+        _sensorOrientation = _cameras[index].sensorOrientation;
+      });
+      await _startImageStream(controller);
+    } catch (e) {
+      if (mounted) setState(() => _error = 'カメラを起動できませんでした: $e');
+    } finally {
+      _starting = false;
+    }
+  }
+
+  Future<void> _startImageStream(CameraController controller) async {
+    try {
+      await controller.startImageStream(_onCameraFrame);
+    } catch (_) {
+      // すでにストリーミング中などは無視 (ライブ検出だけの機能なので致命的ではない)
+    }
+  }
+
+  /// 画像ストリーム: Y 平面を抽出しワーカーへ依頼 (約 150ms 間隔)。
+  void _onCameraFrame(CameraImage image) {
+    final now = DateTime.now();
+    if (now.difference(_lastFrameAt).inMilliseconds < 150) return;
+    _lastFrameAt = now;
+    if (_busy || _worker.isBusy) return;
+    if (_liveFrameW != image.width) {
+      _liveFrameW = image.width;
+      _liveFrameH = image.height;
+    }
+    final decimate = image.width >= 1280 ? 4 : 2;
+    final (gray, dw, dh) = extractGrayPlane(image, decimate: decimate);
+    _worker.submit(gray, dw, dh, _onLiveResult);
+  }
+
+  void _onLiveResult(List<Offset>? corners) {
+    if (!mounted) return;
+    List<Offset>? mapped;
+    if (corners != null && _previewBoxAspect > 0) {
+      mapped = <Offset>[
+        for (final c in corners)
+          frameToPreview(
+              c, _liveFrameW, _liveFrameH, _sensorOrientation, _previewBoxAspect),
+      ];
+    }
+    var color = Colors.white70;
+    if (_autoMode && mapped != null && _auto.isArmed && _auto.stableCount >= 1) {
+      color = const Color(0xFF4CAF50);
+    }
+    _live.value = LiveOverlay(corners: mapped, color: color);
+
+    if (_autoMode && !_busy) {
+      final fire = _auto.feed(mapped, DateTime.now());
+      if (fire) {
+        HapticFeedback.mediumImpact();
+        _capture(auto: true);
+      }
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    if (_cameras.length < 2) return;
+    final next = (_cameraIndex + 1) % _cameras.length;
+    setState(() => _cameraIndex = next);
+    await _startController(next);
+  }
+
+  Future<void> _toggleFlash() async {
+    final next = _flash == FlashMode.off ? FlashMode.auto : FlashMode.off;
+    setState(() => _flash = next);
+    try {
+      await _controller?.setFlashMode(next);
+    } catch (_) {}
+  }
+
+  void _toggleAutoMode() {
+    setState(() {
+      _autoMode = !_autoMode;
+      _auto.reset();
+    });
+    _live.value =
+        LiveOverlay(corners: _live.value.corners, color: Colors.white70);
+    if (_autoMode) {
+      showSnackBar(context, '自動撮影モード: 紙をかざすと自動で取り込みます');
+    }
+  }
+
+  Future<void> _capture({bool auto = false}) async {
+    final controller = _controller;
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        controller.value.isTakingPicture ||
+        _busy) {
+      return;
+    }
+    setState(() => _busy = true);
+    final app = context.read<AppState>();
+    XFile? raw;
+    try {
+      raw = await controller.takePicture();
+      if (!mounted) return;
+
+      if (auto && _live.value.corners != null && _live.value.corners!.length == 4) {
+        // 自動モード: 切り抜き画面をスキップして直接保存。
+        // コーナーは本撮影画像に学習済みネットをかけた結果のみを使う。
+        // null は「紙が写っていない」の意味であり、誤検出を保存しないよう
+        // ライブ枠などへフォールバックせず拒否する。
+        List<Offset>? corners;
+        try {
+          final bytes = await File(raw.path).readAsBytes();
+          final prep = await Isolate.run(() => DocumentDetector.decodeGray(bytes, 512));
+          if (prep != null) {
+            corners = await PaperNet.detectQuad(prep.$1, prep.$2, prep.$3);
+          }
+        } catch (_) {}
+        if (corners == null) {
+          try {
+            await File(raw.path).delete();
+          } catch (_) {}
+          // 同じ誤検出位置で連続発火しないよう現在のライブ枠を記録しておく
+          _auto.noteManualCapture(_live.value.corners, DateTime.now());
+          if (mounted) showSnackBar(context, '紙面を検出できませんでした');
+          return;
+        }
+        await app.addScannedPage(
+          document: widget.document,
+          rawPath: raw.path,
+          crop: CropResult(corners: corners, rotation: 0),
+        );
+        _savedCount++;
+        if (mounted) showSnackBar(context, '$_savedCountページ目を自動保存しました');
+      } else {
+        if (!mounted) return;
+        final result = await Navigator.of(context).push<CropResult>(
+          MaterialPageRoute<CropResult>(builder: (_) => CropScreen(file: raw!)),
+        );
+        if (result != null && mounted) {
+          final app = context.read<AppState>();
+          await app.addScannedPage(
+              document: widget.document, rawPath: raw.path, crop: result);
+          _savedCount++;
+          if (mounted) showSnackBar(context, '$_savedCountページ目を保存しました');
+        }
+        // 手動撮影で位置が決まったら自動再武装の基準も更新
+        if (_autoMode) {
+          _auto.noteManualCapture(_live.value.corners, DateTime.now());
+        }
+      }
+      try {
+        await File(raw.path).delete();
+      } catch (_) {}
+    } catch (e) {
+      if (mounted) showSnackBar(context, '保存に失敗しました: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    if (controller != null && controller.value.isInitialized) {
+      _previewBoxAspect = _previewAspect(context, controller);
+    }
+    return PopScope(
+      canPop: !_busy,
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: _buildBody(context),
+      ),
+    );
+  }
+
+  /// 画面上のプレビュー枠のアスペクト比 (幅/高さ)。
+  /// controller.value.aspectRatio はセンサー基準 (横長) なので、
+  /// CameraPreview と同様に縦画面では逆数にする。
+  static double _previewAspect(
+      BuildContext context, CameraController controller) {
+    final aspect = controller.value.aspectRatio;
+    return MediaQuery.orientationOf(context) == Orientation.portrait
+        ? 1 / aspect
+        : aspect;
+  }
+
+  Widget _buildBody(BuildContext context) {
+    if (_permissionDenied) {
+      return _MessagePane(
+        icon: Icons.no_photography_outlined,
+        title: 'カメラの利用が許可されていません',
+        message: '設定アプリでカメラへのアクセスを許可してください。',
+        actionLabel: '設定を開く',
+        onAction: openAppSettings,
+      );
+    }
+    if (_error != null) {
+      return _MessagePane(
+        icon: Icons.error_outline,
+        title: 'エラー',
+        message: _error!,
+        actionLabel: '再試行',
+        onAction: _bootstrap,
+      );
+    }
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final pageSoFar = _savedCount + 1;
+    final reduceColors = context.watch<AppState>().reduceColors;
+    return Stack(
+      children: <Widget>[
+        Center(
+          child: AspectRatio(
+            aspectRatio: _previewAspect(context, controller),
+            child: Stack(
+              fit: StackFit.expand,
+              children: <Widget>[
+                CameraPreview(controller),
+                ValueListenableBuilder<LiveOverlay>(
+                  valueListenable: _live,
+                  builder: (context, overlay, _) => CustomPaint(
+                    painter: _LiveQuadPainter(overlay),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // 紙面ガイド (ライブ検出が出ていないときのヒント)
+        IgnorePointer(
+          child: ValueListenableBuilder<LiveOverlay>(
+            valueListenable: _live,
+            builder: (context, overlay, _) {
+              if (overlay.corners != null) return const SizedBox.shrink();
+              return Center(
+                child: Container(
+                  width: MediaQuery.of(context).size.width * 0.82,
+                  height: MediaQuery.of(context).size.width * 0.82 * 1.35,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.white54, width: 1.5),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  alignment: Alignment.topCenter,
+                  child: Container(
+                    margin: const EdgeInsets.only(top: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.black45,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Text(
+                      '用紙を枠に収めて撮影',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        // 上部バー
+        SafeArea(
+          child: Row(
+            children: <Widget>[
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: _busy ? null : () => Navigator.of(context).pop(),
+              ),
+              Expanded(
+                child: Text(
+                  '${widget.document.title} ・ $pageSoFarページ目',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.w600),
+                ),
+              ),
+              // 自動撮影トグル
+              GestureDetector(
+                onTap: _busy ? null : _toggleAutoMode,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: _autoMode ? const Color(0xFF4CAF50) : Colors.black38,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: _autoMode ? Colors.white : Colors.white38,
+                      width: 1.2,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Icon(
+                        Icons.burst_mode,
+                        size: 16,
+                        color: _autoMode ? Colors.white : Colors.white70,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '自動',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: _autoMode ? Colors.white : Colors.white70,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              // 減色オプション (色域を認識して自動で色数を減らし軽量化)
+              IconButton(
+                tooltip: '減色して軽量化 (自動)',
+                icon: Icon(
+                  Icons.palette_outlined,
+                  color: reduceColors
+                      ? const Color(0xFF4CAF50)
+                      : Colors.white70,
+                ),
+                onPressed: () {
+                  final app = context.read<AppState>();
+                  app.setReduceColors(!reduceColors);
+                  showSnackBar(
+                    context,
+                    app.reduceColors
+                        ? '減色オン: 色数を自動で絞って軽く保存します'
+                        : '減色オフ: フルカラーで保存します',
+                  );
+                },
+              ),
+              IconButton(
+                icon: Icon(
+                  _flash == FlashMode.off ? Icons.flash_off : Icons.flash_auto,
+                  color: Colors.white,
+                ),
+                onPressed: _toggleFlash,
+              ),
+              if (_cameras.length > 1)
+                IconButton(
+                  icon: const Icon(Icons.cameraswitch, color: Colors.white),
+                  onPressed: _busy ? null : _switchCamera,
+                ),
+            ],
+          ),
+        ),
+        // 自動モードのステータス
+        if (_autoMode)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 130,
+            child: IgnorePointer(
+              child: Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    _busy
+                        ? '保存中…'
+                        : '紙をかざすと自動で撮影・保存します (紙を入れ替えると次を撮影)',
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        // シャッター
+        Align(
+          alignment: Alignment.bottomCenter,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 24),
+              child: GestureDetector(
+                onTap: _busy ? null : _capture,
+                child: Container(
+                  width: 76,
+                  height: 76,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.transparent,
+                    border: Border.all(color: Colors.white, width: 4),
+                  ),
+                  padding: const EdgeInsets.all(5),
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white,
+                    ),
+                    child: _busy
+                        ? const Padding(
+                            padding: EdgeInsets.all(20),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 3,
+                              color: Colors.black54,
+                            ),
+                          )
+                        : null,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// ライブオーバーレイの表示データ。
+class LiveOverlay {
+  const LiveOverlay({this.corners, this.color = Colors.white70});
+
+  /// プレビュー正規化座標の四隅 [TL,TR,BR,BL]。未検出時は null。
+  final List<Offset>? corners;
+  final Color color;
+}
+
+/// ライブ検出結果の枠 + コーナー点を描くペインター。
+class _LiveQuadPainter extends CustomPainter {
+  _LiveQuadPainter(this.overlay);
+
+  final LiveOverlay overlay;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final corners = overlay.corners;
+    if (corners == null || corners.length != 4) return;
+    final pts = <Offset>[
+      for (final c in corners) Offset(c.dx * size.width, c.dy * size.height),
+    ];
+    final line = Paint()
+      ..color = overlay.color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..isAntiAlias = true;
+    final path = Path()
+      ..moveTo(pts[0].dx, pts[0].dy)
+      ..lineTo(pts[1].dx, pts[1].dy)
+      ..lineTo(pts[2].dx, pts[2].dy)
+      ..lineTo(pts[3].dx, pts[3].dy)
+      ..close();
+    canvas.drawPath(path, line);
+    final dot = Paint()..color = overlay.color;
+    final ring = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..color = Colors.black38;
+    for (final p in pts) {
+      canvas.drawCircle(p, 6, dot);
+      canvas.drawCircle(p, 6, ring);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _LiveQuadPainter oldDelegate) {
+    return oldDelegate.overlay != overlay;
+  }
+}
+
+class _MessagePane extends StatelessWidget {
+  const _MessagePane({
+    required this.icon,
+    required this.title,
+    required this.message,
+    required this.actionLabel,
+    required this.onAction,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final String actionLabel;
+  final Future<void> Function() onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(icon, size: 64, color: Colors.white54),
+            const SizedBox(height: 16),
+            Text(title,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 20),
+            OutlinedButton(
+              onPressed: () => onAction(),
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.white),
+              child: Text(actionLabel),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
