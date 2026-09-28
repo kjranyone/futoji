@@ -236,7 +236,13 @@ switch ($Command) {
         if (-not (Get-ChildItem $Data -Filter *.json -ErrorAction SilentlyContinue)) {
             throw "評価データがありません: $Data (./dev.ps1 pull で取り込み)"
         }
-        $outDir = "build/paper_eval/$([IO.Path]::GetFileNameWithoutExtension($Model))_$(Split-Path $Data -Leaf)"
+        # 評価条件ごとに出力先を分ける (同じモデル・データでも上書きしない)
+        $suffix = ''
+        if ($env:PAPER_SIM_STREAM -eq '1') { $suffix += '_live' }
+        if ($env:PAPER_SNAP -eq '1') { $suffix += '_snap' }
+        if ($env:PAPER_PAD) { $suffix += "_pad$($env:PAPER_PAD)" }
+        if ($env:PAPER_OPEN) { $suffix += "_open$($env:PAPER_OPEN)" }
+        $outDir = "build/paper_eval/$([IO.Path]::GetFileNameWithoutExtension($Model))_$(Split-Path $Data -Leaf)$suffix"
         $env:PAPER_MODEL = $Model
         $env:PAPER_EVAL_DIR = $Data
         $env:PAPER_EVAL_OUT = $outDir

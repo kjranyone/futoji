@@ -261,4 +261,25 @@ void main() {
     // 単色では二値化の前景比が極端になるため null が妥当
     expect(quad, isNull);
   });
+
+  test('openMask: 細い首でつながったはみ出しを切り離し、本体は残す', () {
+    const w = 100, h = 100;
+    final mask = Uint8List(w * h);
+    void fill(int x0, int y0, int x1, int y1) {
+      for (int y = y0; y < y1; y++) {
+        for (int x = x0; x < x1; x++) {
+          mask[y * w + x] = 255;
+        }
+      }
+    }
+
+    fill(20, 20, 70, 80); // 紙の本体
+    fill(70, 49, 90, 51); // 幅 2px の首
+    fill(88, 40, 98, 60); // はみ出しの塊
+    final opened = DocumentDetector.openMask(mask, w, h, 2);
+    expect(opened[50 * w + 45], 255, reason: '本体は残る');
+    expect(opened[50 * w + 80], 0, reason: '首は消える');
+    expect(opened.every((v) => v == 0 || v == 255), isTrue);
+    expect(DocumentDetector.openMask(mask, w, h, 0), same(mask));
+  });
 }

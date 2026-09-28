@@ -256,6 +256,7 @@ class OrtSessionBundle {
             double fill)?
         onDebug,
     double pad = DocumentDetector.netCornerPad,
+    int openRadius = DocumentDetector.netMaskOpenRadius,
   }) {
     const elements = 256 * 256;
     final input = inputData.asTypedList(elements);
@@ -298,7 +299,8 @@ class OrtSessionBundle {
       onDebug?.call(input, mask, mask, maskSum / elements);
       return null; // 紙なし
     }
-    final filled = DocumentDetector.fillHoles(mask, 256, 256);
+    final filled = DocumentDetector.openMask(
+        DocumentDetector.fillHoles(mask, 256, 256), 256, 256, openRadius);
     onDebug?.call(input, mask, filled, maskSum / elements);
     final quad = DocumentDetector.detectLuminance(
         filled, 256, 256,

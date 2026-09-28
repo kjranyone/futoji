@@ -27,6 +27,9 @@ class DocumentDetector {
   /// 1.80% → 1.46% (90 度回転版 2.20% → 1.82%) に改善した。
   static const double netCornerPad = 0.0;
 
+  /// 紙面ネットのマスクにかけるオープニングの半径 (256x256 上の画素)。
+  static const int netMaskOpenRadius = 0;
+
   /// 紙マスク (ネット出力) がこの割合未満なら「紙なし」とみなす。
   /// 画面の 5% 未満の紙はスキャンしても実用にならず、白い小物の誤検出を避ける。
   static const double minPaperMaskFraction = 0.05;
@@ -263,6 +266,23 @@ class DocumentDetector {
   }
 
   // -------------------------------------------------- モルフォロジー (分離可能)
+
+  /// 2 値マスク (0/255) のオープニング (半径 [r] の収縮 → 膨張)。
+  /// 紙のマスクに細い首でつながった「はみ出し」を切り離し、四角形の当てはめが
+  /// はみ出しの先端に引っ張られるのを防ぐ。r <= 0 なら何もしない。
+  static Uint8List openMask(Uint8List mask, int w, int h, int r) {
+    if (r <= 0) return mask;
+    final bin = Uint8List(w * h);
+    for (int i = 0; i < w * h; i++) {
+      bin[i] = mask[i] > 0 ? 1 : 0; // _erode/_dilate は 0/1 前提
+    }
+    final opened = _dilate(_erode(bin, w, h, r), w, h, r);
+    final out = Uint8List(w * h);
+    for (int i = 0; i < w * h; i++) {
+      out[i] = opened[i] > 0 ? 255 : 0;
+    }
+    return out;
+  }
 
   static Uint8List _dilate(Uint8List src, int w, int h, int r) =>
       _minMax(src, w, h, r, true);

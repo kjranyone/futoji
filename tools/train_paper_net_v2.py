@@ -182,7 +182,7 @@ def target_quad(rng, W, H, src_q, allow_out, area=None, center=None):
     return q + [cx, cy]
 
 
-def paste_paper(rng, canvas, paper, allow_out, area=None, center=None):
+def paste_paper(rng, canvas, paper, allow_out, area=None, center=None, p_panel=0.0):
     """紙を canvas に貼り、(canvas, mask(0/1 float), dst_quad) を返す。"""
     H, W = canvas.shape[:2]
     _, im, src_q = paper
@@ -203,6 +203,28 @@ def paste_paper(rng, canvas, paper, allow_out, area=None, center=None):
         sh = np.roll(alpha, (int(rng.integers(-4, 5)), int(rng.integers(-4, 5))), axis=(0, 1))
         sh = cv2.GaussianBlur(sh, (0, 0), rng.uniform(1.5, 6))
         canvas = canvas * (1 - sh[..., None] * rng.uniform(0.1, 0.45))
+    # 紙の内側の色ブロック (見出しの帯・色付きの枠・写真など)。影を付けず、正解は
+    # 紙全体のまま。v3 は重なり学習の副作用で「紙の中の大きな色の変化」を別の紙の
+    # 境目と誤認し、色付きのチラシを分割した (eval_heldout_rot90 の fail_upright)。
+    if rng.random() < p_panel:
+        unit = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], np.float32)
+        Mu = cv2.getPerspectiveTransform(unit, dst.astype(np.float32))
+        for _ in range(int(rng.integers(1, 4))):
+            if rng.random() < 0.5:  # 横いっぱいの帯
+                y0 = rng.uniform(0.0, 0.8)
+                rect = [0.02, y0, 0.98, min(0.98, y0 + rng.uniform(0.08, 0.45))]
+            else:
+                x0, y0 = rng.uniform(0.02, 0.7), rng.uniform(0.02, 0.7)
+                rect = [x0, y0, min(0.98, x0 + rng.uniform(0.1, 0.5)),
+                        min(0.98, y0 + rng.uniform(0.1, 0.5))]
+            pts = np.array([[rect[0], rect[1]], [rect[2], rect[1]], [rect[2], rect[3]],
+                            [rect[0], rect[3]]], np.float32)[None]
+            poly = cv2.perspectiveTransform(pts, Mu)[0]
+            color = rng.uniform(0, 1, 3) if rng.random() < 0.7 else np.full(3, rng.uniform(0.05, 0.5))
+            layer = np.zeros((H, W), np.float32)
+            cv2.fillPoly(layer, [poly.round().astype(np.int32)], 1.0)
+            a = layer * rng.uniform(0.5, 0.95)
+            warped = warped * (1 - a[..., None]) + color[None, None, :] * a[..., None]
     # 紙自体の明るさ・色味 (照明の違い)
     warped = warped * rng.uniform(0.75, 1.15) * rng.uniform(0.93, 1.07, 3)
     canvas = canvas * (1 - alpha[..., None]) + warped * alpha[..., None]
@@ -251,7 +273,7 @@ def _pick(rng, papers):
     return papers[int(rng.integers(len(papers)))]
 
 
-def paste_scene(rng, canvas, papers, p_multi, p_occluder):
+def paste_scene(rng, canvas, papers, p_multi, p_occluder, p_panel=0.0):
     """紙を貼る。正解マスクは「主な 1 枚」の四角形全体だけ。
 
     - 単独 (既定): 1 枚だけ貼る
@@ -274,8 +296,9 @@ def paste_scene(rng, canvas, papers, p_multi, p_occluder):
             canvas, _, _ = paste_paper(rng, canvas, _pick(rng, papers), True,
                                        area=main_area * rng.uniform(0.6, 1.05), center=bc)
         return paste_paper(rng, canvas, _pick(rng, papers), False,
-                           area=main_area, center=(cx, cy))
-    canvas, mask, dst = paste_paper(rng, canvas, _pick(rng, papers), rng.random() < 0.15)
+                           area=main_area, center=(cx, cy), p_panel=p_panel)
+    canvas, mask, dst = paste_paper(rng, canvas, _pick(rng, papers), rng.random() < 0.15,
+                                    p_panel=p_panel)
     if u < p_multi + p_occluder:
         main_area = float(mask.sum()) / (W * H)
         # 主な紙の内側 (辺寄り) を中心に小さな紙を載せる
@@ -289,7 +312,8 @@ def paste_scene(rng, canvas, papers, p_multi, p_occluder):
     return canvas, mask, dst
 
 
-def make_composite(rng, papers, bgs, want_canvas=False, p_multi=0.0, p_occluder=0.0):
+def make_composite(rng, papers, bgs, want_canvas=False, p_multi=0.0, p_occluder=0.0,
+                   p_panel=0.0):
     """1 サンプル。want_canvas=True なら評価書き出し用に canvas と四隅も返す。"""
     W, H = rand_canvas(rng)
     r = rng.random()
@@ -316,7 +340,7 @@ def make_composite(rng, papers, bgs, want_canvas=False, p_multi=0.0, p_occluder=
         if r < 0.20:
             mask = np.zeros((H, W), np.float32)  # 紙なし (ネガティブ)
         else:
-            canvas, mask, dst = paste_scene(rng, canvas, papers, p_multi, p_occluder)
+            canvas, mask, dst = paste_scene(rng, canvas, papers, p_multi, p_occluder, p_panel)
     canvas = photometric(rng, canvas)
     k = int(rng.integers(4))  # センサー向き (縦持ち/横持ち) の 90 度回転
     if k:
@@ -342,11 +366,12 @@ def make_composite(rng, papers, bgs, want_canvas=False, p_multi=0.0, p_occluder=
 
 
 class CompositeStream(IterableDataset):
-    def __init__(self, seed, split="train", p_multi=0.0, p_occluder=0.0):
+    def __init__(self, seed, split="train", p_multi=0.0, p_occluder=0.0, p_panel=0.0):
         self.seed = seed
         self.split = split
         self.p_multi = p_multi
         self.p_occluder = p_occluder
+        self.p_panel = p_panel
 
     def __iter__(self):
         info = get_worker_info()
@@ -357,7 +382,7 @@ class CompositeStream(IterableDataset):
         pool = papers[self.split]
         while True:
             g, m = make_composite(rng, pool, bgs, p_multi=self.p_multi,
-                                  p_occluder=self.p_occluder)
+                                  p_occluder=self.p_occluder, p_panel=self.p_panel)
             yield torch.from_numpy(g[None]), torch.from_numpy(m[None])
 
 
@@ -456,12 +481,13 @@ def onnx_iou(path, vx, vy):
     return float(np.mean(ious))
 
 
-def preview(n, out_path, p_multi=0.0, p_occluder=0.0):
+def preview(n, out_path, p_multi=0.0, p_occluder=0.0, p_panel=0.0):
     rng = np.random.default_rng(1)
     papers, bgs = load_assets()
     tiles = []
     for _ in range(n):
-        g, m = make_composite(rng, papers["train"], bgs, p_multi=p_multi, p_occluder=p_occluder)
+        g, m = make_composite(rng, papers["train"], bgs, p_multi=p_multi, p_occluder=p_occluder,
+                              p_panel=p_panel)
         t = cv2.cvtColor((g * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
         cnts, _ = cv2.findContours((m > 0.5).astype(np.uint8), cv2.RETR_EXTERNAL,
                                    cv2.CHAIN_APPROX_SIMPLE)
@@ -491,13 +517,15 @@ def main():
                     help="複数枚の紙 (主な 1 枚だけが正解) の割合")
     ap.add_argument("--p-occluder", type=float, default=0.0,
                     help="主な紙の上に小さな紙を載せる割合 (正解は主な紙の四角形全体)")
+    ap.add_argument("--p-panel", type=float, default=0.0,
+                    help="紙の内側に色ブロックを描く割合 (正解は紙全体)")
     ap.add_argument("--init-pth", default="", help="この重みから学習を始める (例: build/paper_seg_v2.pth)")
     args = ap.parse_args()
 
     if args.preview:
         os.makedirs(os.path.join(ROOT, "build"), exist_ok=True)
         preview(args.preview, os.path.join(ROOT, "build", "v2_preview.jpg"),
-                p_multi=args.p_multi, p_occluder=args.p_occluder)
+                p_multi=args.p_multi, p_occluder=args.p_occluder, p_panel=args.p_panel)
         return
 
     torch.manual_seed(0)
@@ -514,7 +542,8 @@ def main():
         print(f"baseline {os.path.basename(args.baseline)} val IoU: {onnx_iou(args.baseline, vx, vy):.4f}")
 
     loader = DataLoader(CompositeStream(seed=42, p_multi=args.p_multi,
-                                        p_occluder=args.p_occluder), batch_size=args.batch,
+                                        p_occluder=args.p_occluder, p_panel=args.p_panel),
+                        batch_size=args.batch,
                         num_workers=args.workers, persistent_workers=args.workers > 0)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     warm = 200

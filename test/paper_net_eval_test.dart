@@ -65,6 +65,8 @@ void main() {
   // 実験用: 1 なら snapQuadToEdges を後段にかけて評価する
   final snap = _env('PAPER_SNAP', '0') == '1';
   final simStream = _env('PAPER_SIM_STREAM', '0') == '1';
+  final openRadius = int.parse(_env(
+      'PAPER_OPEN', DocumentDetector.netMaskOpenRadius.toString()));
 
   final labelFiles = evalDir.existsSync()
       ? (evalDir
@@ -111,7 +113,8 @@ void main() {
       final (gray, gw, gh) =
           simStream ? _streamGray(imageFile.readAsBytesSync()) : (
             DocumentDetector.toGray(work), work.width, work.height);
-      final flat = bundle.detectPaperQuad(gray, gw, gh, pad: pad);
+      final flat = bundle.detectPaperQuad(gray, gw, gh,
+          pad: pad, openRadius: openRadius);
       var pred = flat == null
           ? null
           : <Offset>[
@@ -271,6 +274,7 @@ String _report(List<_Result> all, File model) {
     ..writeln('- model: `${model.path}` (${model.lengthSync()} bytes)')
     ..writeln('- corner pad: ${Platform.environment['PAPER_PAD'] ?? DocumentDetector.netCornerPad}'
         ' / edge snap: ${Platform.environment['PAPER_SNAP'] == '1' ? 'on' : 'off'}'
+        ' / open: ${Platform.environment['PAPER_OPEN'] ?? DocumentDetector.netMaskOpenRadius}'
         ' / input: ${Platform.environment['PAPER_SIM_STREAM'] == '1' ? 'live stream (480px)' : 'crop (1000px)'}')
     ..writeln('- samples: 紙あり ${rs.length} / 紙なし ${neg.length}')
     ..writeln('- 紙なし画像での誤検出率: ${_pct(_falsePositiveRate(neg))} '

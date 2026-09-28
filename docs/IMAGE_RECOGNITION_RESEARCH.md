@@ -187,6 +187,40 @@ v1 の精度不足の主因は「学習データと実際の撮影の違い」(�
 `tools/.venv/Scripts/python tools/prepare_quad_labels.py` → `tools/.venv/Scripts/python tools/train_paper_net_v2.py --steps 2500 --batch 16 --workers 3`
 → `build/paper_seg_v2.onnx` を `assets/models/paper_seg.onnx` へコピー。
 
+## 6a-5. v4 モデル: 重なった楽譜への対応 (2026-09-28)
+
+実写の評価セット (ラーメンのチラシ 1 種類) では楽譜の場面を測れていなかったため、
+学習に未使用の生成写真から難例 13 枚 (重なり 6・折れ 5・普通 2) に四隅を手付けした
+(`tools/hard_labels.json` → `training_data/eval_hard`、主指標 IoU)。
+
+- v2 の最大の弱点: **重なった複数枚を 1 枚として塗る** (難例の重なり IoU 0.69〜0.86)
+- v3: 合成に「奥に 1〜2 枚 + 手前に主な紙 (正解は手前の 1 枚だけ)」と「主な紙の上に小さな紙
+  (正解は隠れた部分を含む主な紙全体)」を追加 → 難例 IoU 0.944。ただし副作用で、色付きチラシを
+  色の境目で分割する失敗が実写に出た (eval_heldout_rot90 の fail_upright: IoU 0.63)
+- v4 (採用): 紙の内側に色の帯・ブロックを描く合成 (正解は紙全体) を追加して v3 から追加学習
+
+| 評価セット (切り抜き経路 1000px) | v1 | v2 | v4 |
+|---|---|---|---|
+| 実写・横 (紙あり 4 / 紙なし 8) IoU | 0.74 | 0.938 | 0.933 |
+| 実写・縦 (90 度回転) IoU | 0.56 | 0.913 | 0.922 |
+| 難例 (楽譜 13) IoU | 0.795 | 0.876 | **0.946** |
+| 難例 角誤差中央値 | 4.82% | 3.94% | **1.78%** |
+| 紙なし誤検出 | 0/8 | 0/8 | 0/8 |
+
+ライブ検出の入力 (長辺 480px, `PAPER_SIM_STREAM=1`) でも同傾向 (難例 v2 0.871 → v4 0.953)。
+
+後処理の検討 (採用せず、評価ハーネスで切り替え可能):
+- エッジ吸着 `snapQuadToEdges` (`PAPER_SNAP=1`): 実写は改善、難例は成功@5% が悪化
+- マスクのオープニング `openMask` (`PAPER_OPEN=r`): v3 のはみ出し起因の未検出は救えたが、
+  v4 では有無で差がない → `netMaskOpenRadius = 0`
+
+学習: `tools/train_paper_net_v2.py --init-pth build/paper_seg_v3.pth --p-multi 0.3 --p-occluder 0.15
+--p-panel 0.35 --steps 1500 --lr 8e-4` (v3 は v2 から `--p-multi 0.35 --p-occluder 0.15 --steps 2000 --lr 1e-3`)。
+構造は v2 と同一なので実機の FFI 推論経路は変わらない。ただし v4 の実機での自己診断
+(`./dev.ps1 selftest`) は、端末のロックのため未実施。
+
+残る弱点: 丸まった角・大きな折れ (0143, 0179 など IoU 0.84〜0.87)、評価データの少なさ。
+
 ## 6b. Index / 簡易 OCR の設計 (2026-09-24 追加)
 
 ### Index (= 実装済み)
