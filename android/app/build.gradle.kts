@@ -30,6 +30,30 @@ android {
         versionName = flutter.versionName
     }
 
+    // flutter は --target-platform を指定しても abiFilters に全 ABI (arm/arm64/x64) を設定するため、
+    // onnxruntime-android の他 ABI 用 .so (x86_64 20MB, armeabi-v7a 12MB) が APK に入ってしまう。
+    // flutter が渡す -Ptarget-platform に含まれない ABI のネイティブライブラリを除外する。
+    val flutterTargetPlatforms = (project.findProperty("target-platform") as String?)
+        ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
+    if (!flutterTargetPlatforms.isNullOrEmpty()) {
+        val abiOf = mapOf(
+            "android-arm" to "armeabi-v7a",
+            "android-arm64" to "arm64-v8a",
+            "android-x64" to "x86_64",
+            "android-x86" to "x86",
+        )
+        val keep = flutterTargetPlatforms.mapNotNull { abiOf[it] }.toSet()
+        if (keep.isNotEmpty()) {
+            packaging {
+                jniLibs {
+                    for (abi in abiOf.values - keep) {
+                        excludes += "lib/$abi/**"
+                    }
+                }
+            }
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.

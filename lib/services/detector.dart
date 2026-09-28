@@ -17,6 +17,28 @@ import 'warper.dart';
 /// 5. 凸包 → 最大面積の四角形
 /// 6. 四隅を [TL,TR,BR,BL] に並べて少し外側へパディング
 class DocumentDetector {
+  /// 輝度ヒューリスティック (大津) の四隅を外側へ広げる量 (短辺比)。
+  /// 二値化で影側の縁が欠ける分の補正。
+  static const double defaultCornerPad = 0.02;
+
+  /// 紙面ネット (マスク → 四角形) の四隅を外側へ広げる量 (短辺比)。
+  /// v2 のマスクは紙の縁に合わせて学習しているため広げない。学習に未使用の実写
+  /// (training_data/eval_heldout, 紙あり 4 枚) で 0.02 → 0 にすると角誤差中央値が
+  /// 1.80% → 1.46% (90 度回転版 2.20% → 1.82%) に改善した。
+  static const double netCornerPad = 0.0;
+
+  /// 紙マスク (ネット出力) がこの割合未満なら「紙なし」とみなす。
+  /// 画面の 5% 未満の紙はスキャンしても実用にならず、白い小物の誤検出を避ける。
+  static const double minPaperMaskFraction = 0.05;
+
+  /// 紙マスクがこの割合を超えたら「全面 = 紙なし (判定不能)」とみなす。
+  static const double maxPaperMaskFraction = 0.99;
+
+  /// マスク画素数 [maskSum] / 全画素数 [total] が紙として妥当な範囲か。
+  static bool isPlausiblePaperMask(int maskSum, int total) =>
+      maskSum >= total * minPaperMaskFraction &&
+      maskSum <= total * maxPaperMaskFraction;
+
   /// 戻り値: 画像全体に対する正規化座標 (0..1) の四隅、検出失敗時は null。
   static List<Offset>? detect(img.Image source, {int workWidth = 320}) {
     img.Image small = source;
@@ -115,21 +137,6 @@ class DocumentDetector {
     return gray;
   }
 
-  /// 撮影 JPEG をデコードし、EXIF 反映 → 長辺 [cap] に縮小 → 輝度配列化する。
-  /// (isolate 上で実行する想定の static メソッド)
-  static (Uint8List, int, int)? decodeGray(Uint8List jpegBytes, int cap) {
-    final decoded = img.decodeJpg(jpegBytes);
-    if (decoded == null) return null;
-    var im = img.bakeOrientation(decoded);
-    final long = math.max(im.width, im.height);
-    if (long > cap) {
-      im = im.width >= im.height
-          ? img.copyResize(im, width: cap, interpolation: img.Interpolation.average)
-          : img.copyResize(im, height: cap, interpolation: img.Interpolation.average);
-    }
-    return (toGray(im), im.width, im.height);
-  }
-
   /// 輝度配列 (Y平面など, row-major w×h) から直接検出する。
   /// カメラの画像ストリーム (YUV の Y 平面) を変換なしで処理するための入口。
   /// [workWidth] 幅以下に整数間引きしてから判定する。
@@ -139,6 +146,7 @@ class DocumentDetector {
     int h, {
     int workWidth = 320,
     bool paperChecks = true,
+    double pad = defaultCornerPad,
   }) {
     if (w <= 0 || h <= 0 || gray.length < w * h) return null;
     // 整数間引き (nearest) で作業サイズへ縮小
@@ -146,7 +154,10 @@ class DocumentDetector {
     if (k > 1) {
       final dw = w ~/ k;
       final dh = h ~/ k;
-      if (dw < 64 || dh < 64) return detectLuminance(gray, w, h, workWidth: w);
+      if (dw < 64 || dh < 64) {
+        return detectLuminance(gray, w, h,
+            workWidth: w, paperChecks: paperChecks, pad: pad);
+      }
       final small = Uint8List(dw * dh);
       for (int y = 0; y < dh; y++) {
         final srcRow = y * k * w;
@@ -155,14 +166,14 @@ class DocumentDetector {
           small[dstRow + x] = gray[srcRow + x * k];
         }
       }
-      return _detectFromGray(small, dw, dh, paperChecks: paperChecks);
+      return _detectFromGray(small, dw, dh, paperChecks: paperChecks, pad: pad);
     }
-    return _detectFromGray(gray, w, h, paperChecks: paperChecks);
+    return _detectFromGray(gray, w, h, paperChecks: paperChecks, pad: pad);
   }
 
   /// 輝度配列からの検出本体。
   static List<Offset>? _detectFromGray(Uint8List gray, int w, int h,
-      {bool paperChecks = true}) {
+      {bool paperChecks = true, double pad = defaultCornerPad}) {
     final n = w * h;
 
     // --- 大津の二値化 ---
@@ -210,8 +221,8 @@ class DocumentDetector {
     // (明るい机など「紙のない」明部塊を誤検出しないためのゲート)
     if (paperChecks && !_passesPaperChecks(gray, w, h, corners)) return null;
 
-    // 用紙の縁が影で欠ける分を見越してわずかに外側へ
-    corners = _padCorners(corners, w, h, 0.02);
+    // 用紙の縁が影で欠ける分を見越してわずかに外側へ (短辺比 [pad])
+    if (pad != 0) corners = _padCorners(corners, w, h, pad);
 
     return <Offset>[
       for (final c in corners) Offset(c.x / w, c.y / h),

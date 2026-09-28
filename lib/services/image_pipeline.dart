@@ -10,6 +10,7 @@ import 'package:image/image.dart' as img;
 import '../models/crop_result.dart';
 import 'auto_capture.dart';
 import 'color_quantizer.dart';
+import 'fast_decode.dart';
 import 'storage.dart';
 import 'warper.dart';
 
@@ -29,16 +30,20 @@ class ScanResult {
 
 class _Prepared {
   _Prepared({
-    required this.fullJpg,
-    required this.thumbJpg,
+    required this.fullBmp,
+    required this.thumbBmp,
     required this.width,
     required this.height,
+    this.timings = const <String, int>{},
   });
 
-  final Uint8List fullJpg;
-  final Uint8List thumbJpg;
+  final Uint8List fullBmp;
+  final Uint8List thumbBmp;
   final int width;
   final int height;
+
+  /// 工程ごとの所要時間 (ms)。自己診断で実機の内訳を見るため。
+  final Map<String, int> timings;
 }
 
 /// 撮影 1 枚を「デコード → 回転 → 台形補正 → WebP 保存」まで処理する。
@@ -53,7 +58,16 @@ class ImagePipeline {
     required String pageId,
     CropResult? liveFrame,
     bool reduceColors = false,
+    Map<String, int>? timings,
   }) async {
+    final sw = Stopwatch()..start();
+    void lap(String name) {
+      timings?[name] = sw.elapsedMilliseconds;
+      sw
+        ..reset()
+        ..start();
+    }
+
     final bytes = await rawFile.readAsBytes();
     final corners = <List<double>>[
       for (final c in cornersNormalized) <double>[c.dx, c.dy],
@@ -68,25 +82,33 @@ class ImagePipeline {
             liveFrame.frameHeight ?? 0,
             liveFrame.sensorOrientation ?? 0,
           ];
-    final prepared = await Isolate.run(
-        () => _prepareScanData(bytes, corners, rotationDeg, frame, reduceColors));
+    // デコードは端末のデコーダで縮小しながら行う (純 Dart の全画素デコードは
+    // 実機で約 11 秒かかっていた)。長辺 2600px は A4 を 300dpi よりやや粗めにした上限。
+    final decoded = await decodeImageCapped(bytes, cap: _saveCap);
+    lap('decode');
+    final prepared = await Isolate.run(() =>
+        _prepareScanData(decoded, corners, rotationDeg, frame, reduceColors));
+    lap('isolate');
+    timings?.addAll(prepared.timings);
 
     // WebP エンコードはネイティブ (プラットフォームチャネル) なのでメイン isolate で
     final fullWebp = await FlutterImageCompress.compressWithList(
-      prepared.fullJpg,
+      prepared.fullBmp,
       quality: 84,
       format: CompressFormat.webp,
     );
     final thumbWebp = await FlutterImageCompress.compressWithList(
-      prepared.thumbJpg,
+      prepared.thumbBmp,
       quality: 80,
       format: CompressFormat.webp,
     );
 
+    lap('webp');
     final imageFile = File(AppPaths.imagePathFor(pageId));
     await imageFile.writeAsBytes(fullWebp);
     final thumbFile = File(AppPaths.thumbPathFor(pageId));
     await thumbFile.writeAsBytes(thumbWebp);
+    lap('write');
 
     return ScanResult(
       imageFile: imageFile,
@@ -97,24 +119,24 @@ class ImagePipeline {
   }
 }
 
-/// isolate 上で実行する重い前処理 (デコード→回転→台形補正→JPEG化)。
-/// クロージャ経由で this を送らないよう top-level 関数にしてある。
-_Prepared _prepareScanData(Uint8List bytes, List<List<double>> corners,
-    int rotationDeg, List<Object?>? frame, bool reduceColors) {
-    final decoded = img.decodeJpg(bytes);
-    if (decoded == null) {
-      throw const FormatException('撮影画像を解析できませんでした');
-    }
-    var im = img.bakeOrientation(decoded);
+/// 保存画像の長辺上限。
+const int _saveCap = 2600;
 
-    // 処理・保存の上限 (長辺 2600px)。A4 を 300dpi 相当よりやや粗めにした上限。
-    const cap = 2600;
-    final long = math.max(im.width, im.height);
-    if (long > cap) {
-      im = im.width >= im.height
-          ? img.copyResize(im, width: cap, interpolation: img.Interpolation.average)
-          : img.copyResize(im, height: cap, interpolation: img.Interpolation.average);
+/// isolate 上で実行する重い前処理 (回転→台形補正→BMP化)。
+/// [decoded] は正立・長辺 [_saveCap] 以下にデコード済みの画像。
+/// クロージャ経由で this を送らないよう top-level 関数にしてある。
+_Prepared _prepareScanData(img.Image decoded, List<List<double>> corners,
+    int rotationDeg, List<Object?>? frame, bool reduceColors) {
+    final timings = <String, int>{};
+    final sw = Stopwatch()..start();
+    void lap(String name) {
+      timings['iso_$name'] = sw.elapsedMilliseconds;
+      sw
+        ..reset()
+        ..start();
     }
+
+    var im = decoded;
 
     if (rotationDeg != 0) {
       im = img.copyRotate(im, angle: rotationDeg);
@@ -157,6 +179,7 @@ _Prepared _prepareScanData(Uint8List bytes, List<List<double>> corners,
       outW: outW,
       outH: outH,
     );
+    lap('warp');
 
     // 減色オプション: 色域を分析してパレット数を自動決定し、色数を絞る
     // (白黒文書は 8 色程度に収まり、ファイルも小さくなる)
@@ -175,7 +198,11 @@ _Prepared _prepareScanData(Uint8List bytes, List<List<double>> corners,
       numChannels: 3,
     );
 
-    final fullJpg = Uint8List.fromList(img.encodeJpg(warped, quality: 92));
+    lap('quantize');
+    // WebP 変換 (ネイティブ) に渡すための中間形式。純 Dart の JPEG エンコードは
+    // 実機 2 秒前後かかっていたため、ほぼコピーだけで作れる無圧縮 BMP にする。
+    final fullBmp = Uint8List.fromList(img.encodeBmp(warped));
+    lap('bmp');
 
     // サムネイル (長辺 420px)
     var thumb = warped;
@@ -188,13 +215,15 @@ _Prepared _prepareScanData(Uint8List bytes, List<List<double>> corners,
           : img.copyResize(warped,
               height: thumbCap, interpolation: img.Interpolation.average);
     }
-    final thumbJpg = Uint8List.fromList(img.encodeJpg(thumb, quality: 82));
+    final thumbBmp = Uint8List.fromList(img.encodeBmp(thumb));
+    lap('thumb');
 
     return _Prepared(
-      fullJpg: fullJpg,
-      thumbJpg: thumbJpg,
+      fullBmp: fullBmp,
+      thumbBmp: thumbBmp,
       width: outW,
       height: outH,
+      timings: timings,
     );
 }
 

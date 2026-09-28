@@ -10,6 +10,7 @@ class DbService {
 
   static const String _documentsBox = 'documents';
   static const String _pagesBox = 'pages';
+  static const String _settingsBox = 'settings';
 
   static Future<void> init() async {
     await Hive.initFlutter();
@@ -21,6 +22,7 @@ class DbService {
     }
     await _openBox<MusicDocument>(_documentsBox);
     await _openBox<MusicPage>(_pagesBox);
+    await _openBox<dynamic>(_settingsBox);
   }
 
   /// 破損時は一度消して作り直す (画像ファイル自体は残る)。
@@ -35,4 +37,7 @@ class DbService {
 
   static Box<MusicDocument> get documents => Hive.box<MusicDocument>(_documentsBox);
   static Box<MusicPage> get pages => Hive.box<MusicPage>(_pagesBox);
+
+  /// 単純なキー/値の設定 (bool / String など)。
+  static Box<dynamic> get settings => Hive.box<dynamic>(_settingsBox);
 }

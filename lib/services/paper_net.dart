@@ -1,4 +1,3 @@
-import 'dart:ffi';
 import 'dart:io';
 import 'dart:ui';
 
@@ -8,7 +7,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:image/image.dart' as img;
 
 import 'ort_ffi.dart';
-import 'detector.dart';
 
 /// ONNX の TinyUNet で「紙マスク」を推論し、四隅 (正規化座標) を返すサービス。
 ///
@@ -61,63 +59,27 @@ class PaperNet {
     if (bundle == null || w <= 0 || h <= 0) return null;
     final sw = Stopwatch()..start();
     try {
-      // 入力を書き込み (バイリニア縮小 + 0..1 正規化)
-      final input = bundle.inputData.asTypedList(elements);
-      final scaleX = w / size;
-      final scaleY = h / size;
-      for (int y = 0; y < size; y++) {
-        final sy = (y + 0.5) * scaleY - 0.5;
-        final y0 = sy.floor().clamp(0, h - 1);
-        final y1 = (y0 + 1).clamp(0, h - 1);
-        final fy = (sy - y0).clamp(0.0, 1.0);
-        final row0 = y0 * w;
-        final row1 = y1 * w;
-        for (int x = 0; x < size; x++) {
-          final sx = (x + 0.5) * scaleX - 0.5;
-          final x0 = sx.floor().clamp(0, w - 1);
-          final x1 = (x0 + 1).clamp(0, w - 1);
-          final fx = (sx - x0).clamp(0.0, 1.0);
-          final p00 = gray[row0 + x0].toDouble();
-          final p10 = gray[row0 + x1].toDouble();
-          final p01 = gray[row1 + x0].toDouble();
-          final p11 = gray[row1 + x1].toDouble();
-          final top = p00 + (p10 - p00) * fx;
-          final bottom = p01 + (p11 - p01) * fx;
-          input[y * size + x] =
-              ((top + (bottom - top) * fy) / 255.0).clamp(0.0, 1.0);
-        }
-      }
-
-      bundle.bindings.runSimple(bundle);
-
-      // ロジット → 2値マスク (0/255)
-      final output = bundle.outputData.asTypedList(elements);
-      final mask = Uint8List(elements);
-      int maskSum = 0;
-      for (int i = 0; i < elements; i++) {
-        if (output[i] > 0) {
-          mask[i] = 255;
-          maskSum++;
-        }
-      }
-      // ほぼ空 / ほぼ全部のマスクは紙なし扱い
-      if (maskSum < elements * 0.02 || maskSum > elements * 0.99) {
-        if (kDebugMode) {
-          debugPrint(
-              'PaperNet: no paper mask (${(maskSum / elements * 100).toStringAsFixed(1)}%) ${sw.elapsedMilliseconds}ms');
-        }
-        return null;
-      }
-
-      // 文字・譜線で開いた穴を埋めてから四角形を推定する
-      final filled = DocumentDetector.fillHoles(mask, size, size);
-      final quad = DocumentDetector.detectLuminance(
-          filled, size, size,
-          workWidth: size, paperChecks: false);
+      // 推論本体は OrtSessionBundle.detectPaperQuad (ライブ検出・評価ハーネスと共通)
+      double fill = 0;
+      final flat = bundle.detectPaperQuad(
+        gray,
+        w,
+        h,
+        onDebug: kDebugMode
+            ? (input, mask, filled, f) {
+                fill = f;
+                _dumpDebug(input, mask, filled);
+              }
+            : null,
+      );
+      final quad = flat == null
+          ? null
+          : <Offset>[
+              for (int i = 0; i < 8; i += 2) Offset(flat[i], flat[i + 1]),
+            ];
       if (kDebugMode) {
-        debugPrint('PaperNet: quad=$quad mask=${(maskSum / elements * 100).toStringAsFixed(1)}% '
+        debugPrint('PaperNet: quad=$quad mask=${(fill * 100).toStringAsFixed(1)}% '
             '${sw.elapsedMilliseconds}ms');
-        _dumpDebug(input, mask, filled);
       }
       return quad;
     } catch (e) {
@@ -138,7 +100,7 @@ class PaperNet {
           final i = y * size + x;
           final g = (input[i] * 255).round().clamp(0, 255);
           grayImg.data?.setPixelR(x, y, g);
-          if (filled[i] == 1) {
+          if (filled[i] > 0) {
             ovImg.data?.setPixelRgb(x, y, 255, 0, 0);
           } else {
             ovImg.data?.setPixelRgb(x, y, g, g, g);

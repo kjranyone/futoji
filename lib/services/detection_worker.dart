@@ -37,61 +37,21 @@ final _WorkerState _workerState = _WorkerState();
 class _WorkerState {
   OrtSessionBundle? netBundle;
 
-  /// net 推論 → fillHoles → 四角形 (正規化座標) or null (紙なし/形が崩壊)。
+  /// net 推論 → 四角形 (正規化座標の平坦リスト) or null (紙なし/形が崩壊)。
+  /// 実装は切り抜き画面・評価ハーネスと共通の OrtSessionBundle.detectPaperQuad。
   List<double>? detectNet(Uint8List gray, int w, int h) {
-    final scaleX = w / 256;
-    final scaleY = h / 256;
-    for (int y = 0; y < 256; y++) {
-      final sy = (y + 0.5) * scaleY - 0.5;
-      final y0 = sy.floor().clamp(0, h - 1);
-      final y1 = (y0 + 1).clamp(0, h - 1);
-      final fy = (sy - y0).clamp(0.0, 1.0);
-      final row0 = y0 * w;
-      final row1 = y1 * w;
-      for (int x = 0; x < 256; x++) {
-        final sx = (x + 0.5) * scaleX - 0.5;
-        final x0 = sx.floor().clamp(0, w - 1);
-        final x1 = (x0 + 1).clamp(0, w - 1);
-        final fx = (sx - x0).clamp(0.0, 1.0);
-        final p00 = gray[row0 + x0].toDouble();
-        final p10 = gray[row0 + x1].toDouble();
-        final p01 = gray[row1 + x0].toDouble();
-        final p11 = gray[row1 + x1].toDouble();
-        final top = p00 + (p10 - p00) * fx;
-        final bottom = p01 + (p11 - p01) * fx;
-        netBundle!
-            .writeInputValue(y * 256 + x,
-                ((top + (bottom - top) * fy) / 255.0).clamp(0.0, 1.0));
-      }
-    }
-    netBundle!.bindings.runSimple(netBundle!);
-
-    var maskSum = 0;
-    final mask = Uint8List(256 * 256);
-    for (int i = 0; i < 256 * 256; i++) {
-      if (netBundle!.readOutputValue(i) > 0) {
-        mask[i] = 255;
-        maskSum++;
-      }
-    }
-    if (kDebugMode) {
-      debugPrint(
-          'WorkerNet: mask fill=${(maskSum / (256 * 256) * 100).toStringAsFixed(1)}%');
-    }
-    if (maskSum < 256 * 256 * 0.02 || maskSum > 256 * 256 * 0.99) {
-      return null; // 紙なし
-    }
-    final filled = DocumentDetector.fillHoles(mask, 256, 256);
-    final quad = DocumentDetector.detectLuminance(
-        filled, 256, 256,
-        workWidth: 256, paperChecks: false);
-    if (quad == null) return null;
-    return <double>[
-      for (final c in quad) ...<double>[c.dx, c.dy],
-    ];
+    return netBundle!.detectPaperQuad(
+      gray,
+      w,
+      h,
+      onDebug: kDebugMode
+          ? (_, _, _, fill) => debugPrint(
+              'WorkerNet: mask fill=${(fill * 100).toStringAsFixed(1)}%')
+          : null,
+    );
   }
 
-  /// ヒューリスティックフォールバック (大津ベース)。
+  /// ヒューリスティック (大津ベース)。net が読み込めなかったときだけ使う。
   List<double>? detectHeuristic(Uint8List gray, int w, int h) {
     final quad = DocumentDetector.detectLuminance(gray, w, h);
     if (quad == null) return null;
@@ -153,7 +113,12 @@ class DetectionWorker {
       if (kDebugMode) debugPrint('WorkerNet: main side netReady=$netReady');
       return;
     }
+    // 検出結果が返った = ワーカーは次の依頼を受けられる。
+    // (ここで戻さないと isBusy が true のままになり、ライブ検出が最初の
+    //  1 フレームで止まる)
+    _busy = false;
     final callback = _onResult;
+    _onResult = null;
     if (callback == null) return;
     if (message == null) {
       callback(null);
@@ -224,16 +189,20 @@ class DetectionWorker {
       final w = args[1] as int;
       final h = args[2] as int;
       try {
-        List<double>? flat;
+        // net の null は「紙なし」の判定なので、ヒューリスティックで上書きしない
+        // (上書きすると机の明部などを紙として枠表示・自動撮影してしまう)。
+        // ヒューリスティックは net が使えない場合のみ。
+        final List<double>? flat;
         if (netReady) {
           flat = _workerState.detectNet(gray, w, h);
           if (kDebugMode) {
             debugPrint('WorkerNet: net flat=${flat?.join(',') ?? 'null'}');
           }
-        }
-        flat ??= _workerState.detectHeuristic(gray, w, h);
-        if (kDebugMode && !netReady) {
-          debugPrint('WorkerNet: heuristic result=${flat?.join(',') ?? 'null'}');
+        } else {
+          flat = _workerState.detectHeuristic(gray, w, h);
+          if (kDebugMode) {
+            debugPrint('WorkerNet: heuristic result=${flat?.join(',') ?? 'null'}');
+          }
         }
         reply?.send(flat);
       } catch (e) {

@@ -176,23 +176,27 @@ Offset _rotateNormalized(Offset n, int sensorOrientation) {
 }
 
 /// カメラフレーム上の正規化コーナーをプレビュー表示上の正規化座標へ変換する。
-/// [previewBoxAspect] はオーバーレイを重ねるプレビューボックスのアスペクト比
-/// (controller.value.aspectRatio)。
+/// [previewBoxAspect] はオーバーレイを重ねるプレビューボックスのアスペクト比。
+///
+/// 前提: カメラ画面は縦向き固定 (CameraScreen が SystemChrome で固定する)。
+/// 端末の回転を考慮しないため、横持ちでは正しくない。
+/// [mirror] はフロントカメラ用: プレビューが鏡像表示なので左右を反転する。
 Offset frameToPreview(
   Offset n,
   int frameW,
   int frameH,
   int sensorOrientation,
-  double previewBoxAspect,
-) {
+  double previewBoxAspect, {
+  bool mirror = false,
+}) {
   final mapped = mapFrameCornersToImage(
     corners: <Offset>[n],
     frameW: frameW,
     frameH: frameH,
     sensorOrientation: sensorOrientation,
     imageAspect: previewBoxAspect,
-  );
-  return mapped.first;
+  ).first;
+  return mirror ? Offset(1 - mapped.dx, mapped.dy) : mapped;
 }
 
 /// ストリーム (プレビュー) の座標系で測ったコーナーを、

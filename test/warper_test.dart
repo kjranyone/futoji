@@ -68,6 +68,27 @@ void main() {
       return b;
     }
 
+    test('RGBA (4ch) 入力でも RGB (3ch) と同じ出力になる', () {
+      // 保存処理はデコード結果を RGBA のまま渡す (fast_decode.dart)
+      const w = 120, h = 90;
+      const quad = [
+        Offset(10, 8),
+        Offset(110, 12),
+        Offset(105, 85),
+        Offset(6, 80),
+      ];
+      Uint8List run(int ch) => warpPerspectiveRgb(
+            src: gradient(w, h, ch),
+            srcW: w,
+            srcH: h,
+            numCh: ch,
+            srcQuad: quad,
+            outW: 64,
+            outH: 48,
+          );
+      expect(run(4), run(3));
+    });
+
     test('全面四角形はほぼコピーになる', () {
       const w = 100, h = 60;
       final src = gradient(w, h, 3);

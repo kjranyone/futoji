@@ -120,6 +120,22 @@ void main() {
       expect(out.dy, closeTo(0.1, 1e-9));
     });
 
+    test('フロントカメラ (sensorOrientation=270) は回転後に左右反転', () {
+      // 回転: (nx, ny) → (ny, 1-nx)、鏡像表示なので x を反転 → (1-ny, 1-nx)
+      final out = frameToPreview(
+          const Offset(0.1, 0.2), 640, 480, 270, 480 / 640,
+          mirror: true);
+      expect(out.dx, closeTo(1 - 0.2, 1e-9));
+      expect(out.dy, closeTo(1 - 0.1, 1e-9));
+    });
+
+    test('背面カメラは反転しない (mirror 既定 false)', () {
+      final a = frameToPreview(const Offset(0.3, 0.6), 640, 480, 90, 480 / 640);
+      final b = frameToPreview(const Offset(0.3, 0.6), 640, 480, 90, 480 / 640,
+          mirror: false);
+      expect(a, b);
+    });
+
     test('mapFrameCornersToImage: 回転 + クロップ補正', () {
       // フレーム 4:3 (横) / 画像 3:4 (縦, EXIF回転済み)
       final corners = <Offset>[

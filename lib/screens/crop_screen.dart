@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:isolate';
 import 'dart:typed_data';
 
@@ -7,27 +8,12 @@ import 'package:image/image.dart' as img;
 
 import '../models/crop_result.dart';
 import '../services/detector.dart';
+import '../services/fast_decode.dart';
 import '../services/paper_net.dart';
+import '../services/training_capture.dart';
 import '../widgets/corner_overlay.dart';
 /// isolate に渡すクロージャが State (this) を暗黙キャプチャしないよう、
 /// 重い処理は必ず top-level 関数に切り出して sendable な引数だけで呼ぶ。
-img.Image _prepareWorkImage(Uint8List bytes) {
-  final decoded = img.decodeJpg(bytes);
-  if (decoded == null) {
-    throw const FormatException('画像を読み込めませんでした');
-  }
-  var im = img.bakeOrientation(decoded);
-  const cap = 1000;
-  if (im.width > cap) {
-    im = img.copyResize(im,
-        width: cap, interpolation: img.Interpolation.average);
-  } else if (im.height > cap) {
-    im = img.copyResize(im,
-        height: cap, interpolation: img.Interpolation.average);
-  }
-  return im;
-}
-
 img.Image _rotateWorkImage(List<Object?> args) {
   return img.copyRotate(args[0] as img.Image, angle: args[1] as int);
 }
@@ -43,16 +29,14 @@ class CropScreen extends StatefulWidget {
 }
 
 class _CropScreenState extends State<CropScreen> {
-  /// isolate 上でワーク画像 (長辺 1000px) を用意する。
-  /// static なのでクロージャのコンテキストに this が入らない。
-  static Future<img.Image> _decodeWorkInIsolate(Uint8List bytes) =>
-      Isolate.run(() => _prepareWorkImage(bytes));
-
   static Future<img.Image> _rotateInIsolate(img.Image work, int rotation) =>
       Isolate.run(() => _rotateWorkImage(<Object?>[work, rotation]));
 
   img.Image? _work; // 小さめのワーク画像 (回転 0 度基準)
   Uint8List? _display; // 画面表示用 JPEG
+  int _displayW = 0;
+  int _displayH = 0;
+  List<Offset>? _predicted; // 現在の回転でのモデル予測 (学習データ保存用)
   int _rotation = 0;
   double _aspect = 1;
   List<Offset> _corners = _defaultCorners();
@@ -76,9 +60,8 @@ class _CropScreenState extends State<CropScreen> {
   Future<void> _load() async {
     try {
       final bytes = await widget.file.readAsBytes();
-      // 非同期インスタンスメソッド内のクロージャは VM のコンテキスト共有で
-      // this (State) を暗黙キャプチャするため、isolate 呼び出しは static 経由に限定する
-      final work = await _decodeWorkInIsolate(bytes);
+      // 端末のデコーダで縮小しながら読む (純 Dart の全画素デコードは実機で約 11 秒)
+      final work = await decodeWorkImage(bytes);
       _work = work;
       await _applyRotation(0, detect: true);
     } catch (e) {
@@ -109,6 +92,9 @@ class _CropScreenState extends State<CropScreen> {
       _rotation = rotation;
       _aspect = rotated.width / rotated.height;
       _display = Uint8List.fromList(img.encodeJpg(rotated, quality: 88));
+      _displayW = rotated.width;
+      _displayH = rotated.height;
+      _predicted = quad == null ? null : List<Offset>.unmodifiable(quad);
       _autoDetected = quad != null;
       if (quad != null) {
         _corners = quad;
@@ -136,6 +122,18 @@ class _CropScreenState extends State<CropScreen> {
   }
 
   void _confirm() {
+    final display = _display;
+    if (display != null && TrainingCapture.enabled) {
+      // 画面に出していた正立画像そのものと、確定した四隅を保存する
+      // (座標系が一致する)。保存完了は待たない。
+      unawaited(TrainingCapture.save(
+        jpeg: display,
+        width: _displayW,
+        height: _displayH,
+        corners: List<Offset>.of(_corners),
+        predicted: _predicted,
+      ));
+    }
     Navigator.of(context).pop(
       CropResult(corners: List<Offset>.of(_corners), rotation: _rotation),
     );

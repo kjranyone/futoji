@@ -12,6 +12,7 @@ import '../models/music_document.dart';
 import '../services/auto_capture.dart';
 import '../services/detection_worker.dart';
 import '../services/detector.dart';
+import '../services/fast_decode.dart';
 import '../services/paper_net.dart';
 import '../state/app_state.dart';
 import '../widgets/dialogs.dart';
@@ -37,6 +38,7 @@ class _CameraScreenState extends State<CameraScreen>
   List<CameraDescription> _cameras = const <CameraDescription>[];
   int _cameraIndex = 0;
   int _sensorOrientation = 90;
+  bool _frontCamera = false;
   FlashMode _flash = FlashMode.off;
 
   bool _permissionDenied = false;
@@ -64,6 +66,10 @@ class _CameraScreenState extends State<CameraScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // ライブ枠の座標変換 (frameToPreview) は縦向きを前提にしているため、
+    // カメラ画面の間だけ縦向きに固定する (横持ちでは枠が 90/180 度ずれる)。
+    SystemChrome.setPreferredOrientations(
+        const <DeviceOrientation>[DeviceOrientation.portraitUp]);
     _loadNetAndStartWorker();
     _bootstrap();
   }
@@ -79,13 +85,15 @@ class _CameraScreenState extends State<CameraScreen>
         setState(() {});
       }
     } catch (e) {
-      debugPrint('PaperNet worker start failed: \$e');
+      debugPrint('PaperNet worker start failed: $e');
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // 他の画面は向き自由に戻す (空リスト = アプリ既定)
+    SystemChrome.setPreferredOrientations(const <DeviceOrientation>[]);
     _controller?.dispose();
     _worker.dispose();
     _live.dispose();
@@ -160,6 +168,8 @@ class _CameraScreenState extends State<CameraScreen>
         _controller = controller;
         _error = null;
         _sensorOrientation = _cameras[index].sensorOrientation;
+        _frontCamera =
+            _cameras[index].lensDirection == CameraLensDirection.front;
       });
       await _startImageStream(controller);
     } catch (e) {
@@ -199,7 +209,8 @@ class _CameraScreenState extends State<CameraScreen>
       mapped = <Offset>[
         for (final c in corners)
           frameToPreview(
-              c, _liveFrameW, _liveFrameH, _sensorOrientation, _previewBoxAspect),
+              c, _liveFrameW, _liveFrameH, _sensorOrientation, _previewBoxAspect,
+              mirror: _frontCamera),
       ];
     }
     var color = Colors.white70;
@@ -267,11 +278,13 @@ class _CameraScreenState extends State<CameraScreen>
         List<Offset>? corners;
         try {
           final bytes = await File(raw.path).readAsBytes();
-          final prep = await Isolate.run(() => DocumentDetector.decodeGray(bytes, 512));
-          if (prep != null) {
-            corners = await PaperNet.detectQuad(prep.$1, prep.$2, prep.$3);
-          }
-        } catch (_) {}
+          // 端末のデコーダで縮小しながら読む (純 Dart の全画素デコードは実機で約 11 秒)
+          final im = await decodeImageCapped(bytes, cap: 512);
+          final gray = await Isolate.run(() => DocumentDetector.toGray(im));
+          corners = await PaperNet.detectQuad(gray, im.width, im.height);
+        } catch (e) {
+          debugPrint('auto capture detect failed: $e');
+        }
         if (corners == null) {
           try {
             await File(raw.path).delete();

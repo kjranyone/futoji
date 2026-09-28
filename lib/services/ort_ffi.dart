@@ -244,7 +244,19 @@ class OrtSessionBundle {
   /// このメソッド内で ffi のポインタ拡張を使用するため、
   /// dart:isolate や camera を import しているファイルからは呼ばないこと
   /// (拡張メンバの解決が壊れる)。
-  List<double>? detectPaperQuad(Uint8List gray, int w, int h) {
+  ///
+  /// アプリの全経路 (切り抜き画面・撮影直後の自動判定・ライブ検出ワーカー) と
+  /// 評価ハーネス (test/paper_net_eval_test.dart) が共通で使う唯一の実装。
+  /// [onDebug] には推論後の (入力, 2 値マスク, 穴埋め後マスク, マスク面積比) を渡す。
+  List<double>? detectPaperQuad(
+    Uint8List gray,
+    int w,
+    int h, {
+    void Function(Float32List input, Uint8List mask, Uint8List filled,
+            double fill)?
+        onDebug,
+    double pad = DocumentDetector.netCornerPad,
+  }) {
     const elements = 256 * 256;
     final input = inputData.asTypedList(elements);
     final scaleX = w / 256;
@@ -282,13 +294,15 @@ class OrtSessionBundle {
         maskSum++;
       }
     }
-    if (maskSum < elements * 0.02 || maskSum > elements * 0.99) {
+    if (!DocumentDetector.isPlausiblePaperMask(maskSum, elements)) {
+      onDebug?.call(input, mask, mask, maskSum / elements);
       return null; // 紙なし
     }
     final filled = DocumentDetector.fillHoles(mask, 256, 256);
+    onDebug?.call(input, mask, filled, maskSum / elements);
     final quad = DocumentDetector.detectLuminance(
         filled, 256, 256,
-        workWidth: 256, paperChecks: false);
+        workWidth: 256, paperChecks: false, pad: pad);
     if (quad == null) return null;
     return <double>[
       for (final c in quad) ...<double>[c.dx, c.dy],
@@ -361,8 +375,11 @@ class OrtApiBindings {
       api.ref.GetErrorMessage.asFunction<_GetErrorDart>();
 
   /// libonnxruntime4jni.so から OrtApi を取得する。
-  static OrtApiBindings load() {
-    final lib = DynamicLibrary.open('libonnxruntime.so');
+  ///
+  /// [libraryPath] を渡すと別の ORT (例: 評価ハーネス用の Windows 版
+  /// onnxruntime.dll, 1.16 以上) を読み込む。C API は OS 間で共通。
+  static OrtApiBindings load({String? libraryPath}) {
+    final lib = DynamicLibrary.open(libraryPath ?? 'libonnxruntime.so');
     final base = lib.lookupFunction<Pointer<OrtApiBaseStruct> Function(),
         Pointer<OrtApiBaseStruct> Function()>('OrtGetApiBase')();
     // API バージョン 16 を要求 (vtable の並びは以後互換で固定)
@@ -416,8 +433,9 @@ class OrtApiBindings {
 
   /// モデルバイト列からセッション一式 (入出力テンソル束縛済み) を作る。
   /// どの isolate から呼んでもよい (C API はスレッドセーフ)。
-  static OrtSessionBundle createSessionBundle(Uint8List modelBytes) {
-    final bindings = OrtApiBindings.load();
+  static OrtSessionBundle createSessionBundle(Uint8List modelBytes,
+      {String? libraryPath}) {
+    final bindings = OrtApiBindings.load(libraryPath: libraryPath);
     final modelBuf = calloc<Uint8>(modelBytes.length);
     modelBuf.asTypedList(modelBytes.length).setAll(0, modelBytes);
 
