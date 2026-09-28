@@ -1,0 +1,291 @@
+// 紙面検出モデル (assets/models/paper_seg.onnx) の実写評価ハーネス。
+//
+// アプリの切り抜き画面と同じ経路 (正立画像 → 長辺 1000px → 輝度 →
+// OrtSessionBundle.detectPaperQuad) で推論し、正解四隅と比べる。
+//
+// データ: `<id>.jpg` + `<id>.json` (QuadLabel 形式) を置いたフォルダ。
+//   アプリの「検出改善用に切り抜き結果を保存」で貯めたものを
+//   adb pull してそのまま使える。
+//
+// 実行 (Windows):
+//   pwsh tools/setup_ort_windows.ps1           # 初回のみ ORT を取得
+//   flutter test test/paper_net_eval_test.dart
+//
+// 環境変数 (省略時は既定値):
+//   PAPER_EVAL_DIR  評価データ     (training_data/eval)
+//   PAPER_MODEL     ONNX モデル    (assets/models/paper_seg.onnx)
+//   ORT_DYLIB       ORT 共有ライブラリ (tools/ort/onnxruntime.dll)
+//   PAPER_EVAL_OUT  レポート出力先  (build/paper_eval)
+//
+// データかライブラリが無い環境ではスキップする。
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
+import 'package:mymusicbook/services/detector.dart';
+import 'package:mymusicbook/services/ort_ffi.dart';
+import 'package:mymusicbook/services/quad_label.dart';
+
+/// 切り抜き画面のワーク画像と同じ上限 (crop_screen.dart の _prepareWorkImage)。
+const int workCap = 1000;
+
+/// 成功判定に使う平均角誤差のしきい値 (画像対角線比)。
+const List<double> successThresholds = <double>[0.01, 0.02, 0.05];
+
+String _env(String key, String fallback) =>
+    Platform.environment[key]?.trim().isNotEmpty == true
+        ? Platform.environment[key]!.trim()
+        : fallback;
+
+class _Result {
+  _Result(this.id, this.label, this.pred);
+
+  final String id;
+  final QuadLabel label;
+  final List<Offset>? pred;
+  double meanErr = double.infinity;
+  double maxErr = double.infinity;
+  double iou = 0;
+  double? captureMeanErr; // 保存時点のモデル予測の誤差
+
+  bool get detected => pred != null;
+}
+
+void main() {
+  final evalDir = Directory(_env('PAPER_EVAL_DIR', 'training_data/eval'));
+  final modelFile = File(_env('PAPER_MODEL', 'assets/models/paper_seg.onnx'));
+  final ortPath = _env('ORT_DYLIB', 'tools/ort/onnxruntime.dll');
+  final outDir = Directory(_env('PAPER_EVAL_OUT', 'build/paper_eval'));
+  // 四隅の外側パディング (短辺比)。既定はアプリと同じ値。
+  final pad = double.parse(
+      _env('PAPER_PAD', DocumentDetector.netCornerPad.toString()));
+
+  final labelFiles = evalDir.existsSync()
+      ? (evalDir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.json'))
+          .toList()
+        ..sort((a, b) => a.path.compareTo(b.path)))
+      : <File>[];
+
+  String? skipReason;
+  if (labelFiles.isEmpty) {
+    skipReason = '評価データがありません: ${evalDir.path}';
+  } else if (!File(ortPath).existsSync()) {
+    skipReason = 'ORT ライブラリがありません: $ortPath '
+        '(tools/setup_ort_windows.ps1 で取得)';
+  } else if (!modelFile.existsSync()) {
+    skipReason = 'モデルがありません: ${modelFile.path}';
+  }
+
+  test('paper net eval on labeled captures',
+      skip: skipReason ?? false,
+      timeout: const Timeout(Duration(minutes: 20)), () {
+    final bundle = OrtApiBindings.createSessionBundle(
+      modelFile.readAsBytesSync(),
+      libraryPath: File(ortPath).absolute.path,
+    );
+    outDir.createSync(recursive: true);
+
+    final results = <_Result>[];
+    for (final lf in labelFiles) {
+      final id = lf.uri.pathSegments.last.replaceAll('.json', '');
+      final label = QuadLabel.fromJson(
+          (jsonDecode(lf.readAsStringSync()) as Map).cast<String, Object?>());
+      final imageFile = File('${evalDir.path}/${label.image}');
+      if (!imageFile.existsSync()) {
+        // ignore: avoid_print
+        print('skip $id: 画像がありません (${label.image})');
+        continue;
+      }
+      final work = _prepareWorkImage(imageFile.readAsBytesSync());
+      final gray = DocumentDetector.toGray(work);
+      final flat = bundle.detectPaperQuad(gray, work.width, work.height,
+          pad: pad);
+      final pred = flat == null
+          ? null
+          : <Offset>[
+              for (int i = 0; i < 8; i += 2) Offset(flat[i], flat[i + 1]),
+            ];
+
+      final r = _Result(id, label, pred);
+      final truth = label.corners;
+      if (pred != null && truth != null) {
+        final e = QuadMetrics.cornerError(pred, truth, work.width, work.height);
+        r.meanErr = e.mean;
+        r.maxErr = e.max;
+        r.iou = QuadMetrics.quadIoU(pred, truth, work.width, work.height);
+      }
+      if (label.predicted != null && truth != null) {
+        r.captureMeanErr = QuadMetrics.cornerError(
+                label.predicted!, truth, label.width, label.height)
+            .mean;
+      }
+      results.add(r);
+      _writeOverlay(work, truth, pred, File('${outDir.path}/$id.jpg'));
+    }
+
+    final report = _report(results, modelFile);
+    File('${outDir.path}/report.md').writeAsStringSync(report);
+    File('${outDir.path}/summary.json').writeAsStringSync(
+        // NaN / Infinity (空グループ・未検出) は null として書く
+        JsonEncoder.withIndent('  ', (_) => null)
+            .convert(_summary(results, modelFile)));
+    // ignore: avoid_print
+    print(report);
+    // ignore: avoid_print
+    print('overlays / report: ${outDir.absolute.path}');
+    expect(results, isNotEmpty);
+  });
+}
+
+img.Image _prepareWorkImage(Uint8List bytes) {
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) throw const FormatException('画像を読み込めません');
+  var im = img.bakeOrientation(decoded);
+  if (im.width > workCap) {
+    im = img.copyResize(im,
+        width: workCap, interpolation: img.Interpolation.average);
+  } else if (im.height > workCap) {
+    im = img.copyResize(im,
+        height: workCap, interpolation: img.Interpolation.average);
+  }
+  return im;
+}
+
+/// 正解 (緑) と予測 (赤) を重ねた確認用画像。
+void _writeOverlay(
+    img.Image work, List<Offset>? truth, List<Offset>? pred, File out) {
+  final canvas = img.Image.from(work);
+  void drawQuad(List<Offset> q, img.Color color) {
+    for (int i = 0; i < 4; i++) {
+      final a = q[i];
+      final b = q[(i + 1) % 4];
+      img.drawLine(canvas,
+          x1: (a.dx * work.width).round(),
+          y1: (a.dy * work.height).round(),
+          x2: (b.dx * work.width).round(),
+          y2: (b.dy * work.height).round(),
+          color: color,
+          thickness: 3);
+    }
+  }
+
+  if (truth != null) drawQuad(truth, img.ColorRgb8(40, 220, 60));
+  if (pred != null) drawQuad(pred, img.ColorRgb8(240, 40, 40));
+  out.writeAsBytesSync(img.encodeJpg(canvas, quality: 80));
+}
+
+double _median(List<double> xs) {
+  if (xs.isEmpty) return double.nan;
+  final s = List<double>.of(xs)..sort();
+  final m = s.length ~/ 2;
+  return s.length.isOdd ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+String _pct(double v) => v.isFinite ? '${(v * 100).toStringAsFixed(2)}%' : '-';
+
+Map<String, Object?> _groupStats(List<_Result> rs) {
+  final det = rs.where((r) => r.detected).toList();
+  final errs = det.map((r) => r.meanErr).toList();
+  return <String, Object?>{
+    'n': rs.length,
+    'detection_rate': rs.isEmpty ? 0.0 : det.length / rs.length,
+    'median_corner_err': _median(errs),
+    'mean_corner_err':
+        errs.isEmpty ? double.nan : errs.reduce((a, b) => a + b) / errs.length,
+    'mean_iou': rs.isEmpty
+        ? 0.0
+        : rs.map((r) => r.iou).reduce((a, b) => a + b) / rs.length,
+    for (final t in successThresholds)
+      'success@${(t * 100).round()}%': rs.isEmpty
+          ? 0.0
+          : rs.where((r) => r.meanErr <= t).length / rs.length,
+  };
+}
+
+/// 紙なしラベル (corners=null) に対して紙を検出してしまった割合。
+double _falsePositiveRate(List<_Result> negatives) => negatives.isEmpty
+    ? double.nan
+    : negatives.where((r) => r.detected).length / negatives.length;
+
+Map<String, Object?> _summary(List<_Result> all, File model) {
+  final rs = all.where((r) => !r.label.isNegative).toList();
+  final neg = all.where((r) => r.label.isNegative).toList();
+  final capture = rs.where((r) => r.captureMeanErr != null).toList();
+  return <String, Object?>{
+    'evaluated_at': DateTime.now().toIso8601String(),
+    'model': model.path,
+    'model_bytes': model.lengthSync(),
+    'all': _groupStats(rs),
+    'edited': _groupStats(rs.where((r) => r.label.edited).toList()),
+    'unedited': _groupStats(rs.where((r) => !r.label.edited).toList()),
+    'negatives': <String, Object?>{
+      'n': neg.length,
+      'false_positive_rate': _falsePositiveRate(neg),
+    },
+    'capture_time_median_corner_err':
+        _median(capture.map((r) => r.captureMeanErr!).toList()),
+  };
+}
+
+String _report(List<_Result> all, File model) {
+  final rs = all.where((r) => !r.label.isNegative).toList();
+  final neg = all.where((r) => r.label.isNegative).toList();
+  final b = StringBuffer()
+    ..writeln('# Paper net eval')
+    ..writeln()
+    ..writeln('- model: `${model.path}` (${model.lengthSync()} bytes)')
+    ..writeln('- corner pad: ${Platform.environment['PAPER_PAD'] ?? DocumentDetector.netCornerPad}')
+    ..writeln('- samples: 紙あり ${rs.length} / 紙なし ${neg.length}')
+    ..writeln('- 紙なし画像での誤検出率: ${_pct(_falsePositiveRate(neg))} '
+        '(${neg.where((r) => r.detected).length}/${neg.length})')
+    ..writeln('- 角誤差 = 対応する角の距離 / 画像対角線 (4 角平均)。'
+        '未検出は成功率・IoU で失敗 (0) 扱い')
+    ..writeln()
+    ..writeln('| group | n | 検出率 | 角誤差 中央値 | 平均 IoU | '
+        '${successThresholds.map((t) => '成功@${(t * 100).round()}%').join(' | ')} |')
+    ..writeln('|---|---|---|---|---|${successThresholds.map((_) => '---').join('|')}|');
+  void row(String name, List<_Result> g) {
+    final s = _groupStats(g);
+    b.writeln('| $name | ${s['n']} | ${_pct(s['detection_rate']! as double)} | '
+        '${_pct(s['median_corner_err']! as double)} | '
+        '${(s['mean_iou']! as double).toStringAsFixed(3)} | '
+        '${successThresholds.map((t) => _pct(s['success@${(t * 100).round()}%']! as double)).join(' | ')} |');
+  }
+
+  row('all', rs);
+  row('手修正あり', rs.where((r) => r.label.edited).toList());
+  row('手修正なし', rs.where((r) => !r.label.edited).toList());
+
+  b
+    ..writeln()
+    ..writeln('## ワースト (角誤差の大きい順)')
+    ..writeln()
+    ..writeln('| id | 検出 | 平均誤差 | 最大誤差 | IoU | 保存時の誤差 | 手修正 |')
+    ..writeln('|---|---|---|---|---|---|---|');
+  final worst = List<_Result>.of(rs)
+    ..sort((a, b) => b.meanErr.compareTo(a.meanErr));
+  for (final r in worst.take(math.min(30, worst.length))) {
+    b.writeln('| ${r.id} | ${r.detected ? '○' : '×'} | ${_pct(r.meanErr)} | '
+        '${_pct(r.maxErr)} | ${r.iou.toStringAsFixed(3)} | '
+        '${r.captureMeanErr == null ? '-' : _pct(r.captureMeanErr!)} | '
+        '${r.label.edited ? '○' : ''} |');
+  }
+  if (neg.isNotEmpty) {
+    b
+      ..writeln()
+      ..writeln('## 紙なし画像')
+      ..writeln()
+      ..writeln('| id | 判定 |')
+      ..writeln('|---|---|');
+    for (final r in neg) {
+      b.writeln('| ${r.id} | ${r.detected ? '誤検出' : '紙なし (正解)'} |');
+    }
+  }
+  return b.toString();
+}

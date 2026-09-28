@@ -51,3 +51,5 @@ app.*.map.json
 /training_data/
 /tools/*.onnx
 __pycache__/
+/tools/ort/
+/tools/.venv/

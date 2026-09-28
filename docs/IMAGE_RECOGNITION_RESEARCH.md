@@ -115,6 +115,78 @@ UI に支障のない範囲であり、撮影直後の 1 枚解析には十分�
 - フォールバック: モデル不在/推論失敗/マスク不成立時は大津ベースのヒューリスティックへ (精度劣化なしの安全設計)
 - 改善ループ: アプリの四隅手修正 (実写+正解) を将来のファインチューニングデータにできる
 
+## 6a-3. 実写データの収集と評価 (2026-09-28)
+
+合成データ・生成画像・BiRefNet 擬似ラベルでは実写での精度が測れないため、
+アプリの手修正を正解として貯め、アプリと同一の推論経路で評価する。
+
+**収集** (アプリ)
+- ホーム右上メニュー「検出改善用に切り抜き結果を保存」を ON にする (既定 OFF、設定は Hive に保存)
+- 切り抜き画面で確定するたびに、表示していた正立画像 (長辺 1000px) と四隅を保存
+  (`lib/services/training_capture.dart`)。形式は `<id>.jpg` + `<id>.json` (`QuadLabel`)
+  - `corners`: 確定した四隅 (正解) / `predicted`: そのときのモデル出力 (未検出は null) / `edited`: 手で動かしたか
+- 取り出し (Android):
+  `adb pull /sdcard/Android/data/com.kjranyone.mymusicbook/files/training_captures training_data/eval`
+
+**評価** (PC)
+```
+pwsh tools/setup_ort_windows.ps1              # 初回のみ ORT 1.20 (MIT) を tools/ort/ へ
+flutter test test/paper_net_eval_test.dart     # training_data/eval を評価
+```
+- 推論は `OrtSessionBundle.detectPaperQuad` をそのまま使う (前処理・穴埋め・四角形推定までアプリと同一)
+- 指標: 角誤差 (対応角の距離 / 画像対角線, 4 角平均)、四角形 IoU、成功率 @1% / 2% / 5%、検出率
+- 出力: `build/paper_eval/report.md`, `summary.json`, 正解 (緑) / 予測 (赤) のオーバーレイ画像
+- 環境変数 `PAPER_EVAL_DIR` / `PAPER_MODEL` / `ORT_DYLIB` / `PAPER_EVAL_OUT` で切り替え可能
+  (新モデルの比較は `PAPER_MODEL` を差し替えて同じデータで回す)
+
+注意: `detectLuminance` は四角形を外側へ短辺比 2% 広げる (`_padCorners`)。
+手修正の正解が紙の縁ぴったりなら、この分が誤差の下限として乗る。
+
+## 6a-4. v2 モデル: 貼り付け合成 + 事前学習エンコーダ (2026-09-28)
+
+v1 の精度不足の主因は「学習データと実際の撮影の違い」(生成画像は紙が中央に大きく写った単純な構図) と
+「BiRefNet 擬似ラベルの誤り」だった。既存データだけで次のように作り直した。
+
+- ラベル: `tools/prepare_quad_labels.py` で BiRefNet マスクに四角形を当てはめ、
+  マスクとの IoU ≥ 0.93 の 100 枚だけ採用 (残りはマスク自体が壊れていた)。マスクは四隅から作る
+- データ: `tools/train_paper_net_v2.py` で、紙を四隅で切り出し、実写の散らかった机
+  (紙領域を除いた部分) や手続き背景へ、大きさ 4〜70% / 任意回転 / 射影 / はみ出し / 影で貼り付け。
+  紙なしサンプル 5%、90 度回転、4:3・16:9 を 256x256 へ縦横比無視で縮小 (アプリと同じ)
+- モデル: ImageNet 事前学習済み MobileNetV3-Small (BSD-3) + 軽量 U-Net デコーダ。
+  1/2 解像度でロジットを出して 256 へ拡大。約 109 万パラメータ / fp32 4.3MB。
+  入出力は v1 と同じ (1x1x256x256 グレー → ロジット) なのでアプリ側は差し替えのみ
+- 学習: BCE + Dice, AdamW, 2500 step, batch 16, CPU 約 47 分
+- 結果 (2026-09-28 再検証。当初の報告は評価データの漏れがあったため差し替え):
+  - **実写・学習に一切未使用** (`training_data/eval_heldout`: 紙あり 4 枚 + 紙なし 8 枚。四隅は目視で手付け。
+    紙なし 8 枚のうち 6 枚はほぼ同じ場面で実質 3 場面、紙ありも同じチラシ・同じ机で多様性は低い)。
+    アプリと同一経路の Dart ハーネス (`./dev.ps1 eval -Data training_data/eval_heldout`) で:
+
+    | 条件 | モデル | 角誤差中央値 | 平均 IoU | 成功@2% | 紙なし誤検出 |
+    |---|---|---|---|---|---|
+    | 横 (撮影そのまま) | v1 | 7.07% | 0.74 | 25% | 0/8 |
+    | 横 | v2 (pad 0) | 1.46% | 0.94 | 100% | 0/8 |
+    | 縦 (90 度回転版 `eval_heldout_rot90`) | v1 | 12.65% | 0.56 | 0% | 1/8 |
+    | 縦 | v2 (pad 0) | 1.82% | 0.91 | 50% | 0/8 |
+
+  - 合成テスト (チェックポイント選択に使っていない別シード 256 枚): IoU v1 0.53 → v2 0.98。
+    ただし背景素材は学習と共通なので参考値
+  - 以前記載した「実写 4 枚で 2.71% → 1.68%」は、背景素材として学習に使った画像での評価
+    (かつ BiRefNet 由来の不正確なラベル) だったため撤回
+  - 四隅の外側パディング: v2 はマスクが紙の縁に合うため 0.02 → 0 (`DocumentDetector.netCornerPad`)。
+    上表は pad 0。pad 0.02 では横 1.80% / 縦 2.20%
+  - 紙なし判定しきい値 2% → 5% (`DocumentDetector.minPaperMaskFraction`)
+- 実機 (Lenovo TB J716F, profile ビルド, `./dev.ps1 selftest`):
+  - モデル読み込み 242ms、推論 105〜120ms (紙なし) / 200〜250ms (紙あり、四角形推定込み)
+  - 角誤差は PC ハーネスとほぼ一致 (0.33% / 1.34% / 1.82% / 1.84%。差はデコーダの縮小方式の違い)
+  - 切り抜き経路 (メイン isolate) とライブ検出ワーカー (別 isolate) で結果が一致
+- 既知の限界: 背景まで完全に一様な人工画像 (単色の机に真っ白な矩形) では検出しない
+  (実写の机の上の無地の紙は検出する)。実写の評価データが少なく同じ場面ばかりなので、
+  アプリの「検出改善用に切り抜き結果を保存」で多様な場面を集めて `eval_heldout` を増やすこと
+
+再学習: `pwsh` で `uv` 環境 (tools/.venv) を作り、
+`tools/.venv/Scripts/python tools/prepare_quad_labels.py` → `tools/.venv/Scripts/python tools/train_paper_net_v2.py --steps 2500 --batch 16 --workers 3`
+→ `build/paper_seg_v2.onnx` を `assets/models/paper_seg.onnx` へコピー。
+
 ## 6b. Index / 簡易 OCR の設計 (2026-09-24 追加)
 
 ### Index (= 実装済み)

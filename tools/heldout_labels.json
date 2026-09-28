@@ -1,0 +1,121 @@
+{
+ "_note": "学習に一切使っていない実写の評価ラベル (四隅は元画像ピクセル座標 [TL,TR,BR,BL]、null は紙なし)。2026-09-28 に目視で手付け。tools/build_heldout.py が training_data/eval_heldout(_rot90) を生成する",
+ "images": {
+  "fail_scene": {
+   "src": "training_data/real_captures/fail_scene.jpg",
+   "corners": [
+    [
+     1514,
+     530
+    ],
+    [
+     3355,
+     1300
+    ],
+    [
+     2714,
+     2757
+    ],
+    [
+     703,
+     1659
+    ]
+   ]
+  },
+  "CAP6713915444781377347": {
+   "src": "training_data/real_captures/CAP6713915444781377347.jpg",
+   "corners": [
+    [
+     1496,
+     282
+    ],
+    [
+     3396,
+     1297
+    ],
+    [
+     2577,
+     2799
+    ],
+    [
+     517,
+     1405
+    ]
+   ]
+  },
+  "user_scene": {
+   "src": "tools/user_scene.jpg",
+   "corners": [
+    [
+     1003,
+     715
+    ],
+    [
+     3181,
+     720
+    ],
+    [
+     3420,
+     2274
+    ],
+    [
+     840,
+     2295
+    ]
+   ]
+  },
+  "fail_upright": {
+   "src": "tools/fail_upright.jpg",
+   "corners": [
+    [
+     659,
+     864
+    ],
+    [
+     3476,
+     816
+    ],
+    [
+     3316,
+     2705
+    ],
+    [
+     786,
+     2678
+    ]
+   ]
+  },
+  "CAP1139552104731981368": {
+   "src": "training_data/real_captures/CAP1139552104731981368.jpg",
+   "corners": null
+  },
+  "CAP1643449497185691480": {
+   "src": "training_data/real_captures/CAP1643449497185691480.jpg",
+   "corners": null
+  },
+  "CAP2935795320092052890": {
+   "src": "training_data/real_captures/CAP2935795320092052890.jpg",
+   "corners": null
+  },
+  "CAP3544581474585362157": {
+   "src": "training_data/real_captures/CAP3544581474585362157.jpg",
+   "corners": null
+  },
+  "CAP4181161822592414060": {
+   "src": "training_data/real_captures/CAP4181161822592414060.jpg",
+   "corners": null
+  },
+  "CAP6522108627461954465": {
+   "src": "training_data/real_captures/CAP6522108627461954465.jpg",
+   "corners": null
+  },
+  "CAP7587149781016318692": {
+   "src": "training_data/real_captures/CAP7587149781016318692.jpg",
+   "corners": null
+  },
+  "CAP7711862106954049172": {
+   "src": "training_data/real_captures/CAP7711862106954049172.jpg",
+   "corners": null
+  }
+ }
+}
