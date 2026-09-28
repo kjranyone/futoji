@@ -306,11 +306,16 @@ switch ($Command) {
         if ($LASTEXITCODE -ne 0) { throw 'prepare_quad_labels.py が失敗しました。' }
         & $py -u tools/train_paper_net_v2.py --steps $Steps --batch 16 --workers 3 @Rest
         if ($LASTEXITCODE -ne 0) { throw 'train_paper_net_v2.py が失敗しました。' }
-        Write-Host @'
-学習済み: build/paper_seg_v2.onnx
-  比較: tools/.venv/Scripts/python tools/compare_models.py --models assets/models/paper_seg.onnx build/paper_seg_v2.onnx --rot90
-  採用: Copy-Item build/paper_seg_v2.onnx assets/models/paper_seg.onnx
-'@ -ForegroundColor Green
+        $trained = 'build/paper_seg_v2.onnx'
+        $i = [array]::IndexOf([string[]]$Rest, '--out')
+        if ($i -ge 0 -and $i + 1 -lt $Rest.Count) { $trained = $Rest[$i + 1] }
+        Write-Host @"
+学習済み: $trained
+  評価 (学習に未使用の実写。採用前に必ず現行モデルと比べる):
+    ./dev.ps1 eval -Model $trained -Data training_data/eval_heldout
+    ./dev.ps1 eval -Model $trained -Data training_data/eval_heldout_rot90
+  採用: Copy-Item $trained assets/models/paper_seg.onnx  → ./dev.ps1 install → ./dev.ps1 selftest
+"@ -ForegroundColor Green
     }
     'doctor' {
         $ok = { param($name, $value) Write-Host ("  [OK] {0,-10} {1}" -f $name, $value) -ForegroundColor Green }
