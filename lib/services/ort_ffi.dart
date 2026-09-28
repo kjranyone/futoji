@@ -257,6 +257,7 @@ class OrtSessionBundle {
         onDebug,
     double pad = DocumentDetector.netCornerPad,
     int openRadius = DocumentDetector.netMaskOpenRadius,
+    bool refineEdges = true,
   }) {
     const elements = 256 * 256;
     final input = inputData.asTypedList(elements);
@@ -304,7 +305,10 @@ class OrtSessionBundle {
     onDebug?.call(input, mask, filled, maskSum / elements);
     final quad = DocumentDetector.detectLuminance(
         filled, 256, 256,
-        workWidth: 256, paperChecks: false, pad: pad);
+        workWidth: 256,
+        paperChecks: false,
+        pad: pad,
+        refineEdges: refineEdges);
     if (quad == null) return null;
     return <double>[
       for (final c in quad) ...<double>[c.dx, c.dy],

@@ -150,6 +150,7 @@ class DocumentDetector {
     int workWidth = 320,
     bool paperChecks = true,
     double pad = defaultCornerPad,
+    bool refineEdges = true,
   }) {
     if (w <= 0 || h <= 0 || gray.length < w * h) return null;
     // 整数間引き (nearest) で作業サイズへ縮小
@@ -159,7 +160,10 @@ class DocumentDetector {
       final dh = h ~/ k;
       if (dw < 64 || dh < 64) {
         return detectLuminance(gray, w, h,
-            workWidth: w, paperChecks: paperChecks, pad: pad);
+            workWidth: w,
+            paperChecks: paperChecks,
+            pad: pad,
+            refineEdges: refineEdges);
       }
       final small = Uint8List(dw * dh);
       for (int y = 0; y < dh; y++) {
@@ -169,14 +173,18 @@ class DocumentDetector {
           small[dstRow + x] = gray[srcRow + x * k];
         }
       }
-      return _detectFromGray(small, dw, dh, paperChecks: paperChecks, pad: pad);
+      return _detectFromGray(small, dw, dh,
+          paperChecks: paperChecks, pad: pad, refineEdges: refineEdges);
     }
-    return _detectFromGray(gray, w, h, paperChecks: paperChecks, pad: pad);
+    return _detectFromGray(gray, w, h,
+        paperChecks: paperChecks, pad: pad, refineEdges: refineEdges);
   }
 
   /// 輝度配列からの検出本体。
   static List<Offset>? _detectFromGray(Uint8List gray, int w, int h,
-      {bool paperChecks = true, double pad = defaultCornerPad}) {
+      {bool paperChecks = true,
+      double pad = defaultCornerPad,
+      bool refineEdges = true}) {
     final n = w * h;
 
     // --- 大津の二値化 ---
@@ -219,6 +227,13 @@ class DocumentDetector {
 
     var corners = _orderCorners(quadPts);
     if (corners == null || !_isSaneQuad(corners, w, h)) return null;
+
+    // 凸包の頂点は間引き済みで角そのものを落とすことがあるため、
+    // 各辺を領域の境界画素への直線当てはめで引き直し、その交点を角にする。
+    if (refineEdges) {
+      corners = _refineByEdgeFit(region, corners, w, h);
+      if (!_isSaneQuad(corners, w, h)) return null;
+    }
 
     // 紙らしさ検査: 枠の内側が外側より明るく、4辺に実際のエッジが沿っている。
     // (明るい机など「紙のない」明部塊を誤検出しないためのゲート)
@@ -664,6 +679,123 @@ class DocumentDetector {
     if (den.abs() < 1e-9) return null;
     final t = ((p3.dx - p1.dx) * d2y - (p3.dy - p1.dy) * d2x) / den;
     return Offset(p1.dx + t * d1x, p1.dy + t * d1y);
+  }
+
+  /// 四隅を「辺の直線当てはめの交点」に置き換える。
+  ///
+  /// 各辺について、現在の辺の中央 80% 付近にある領域の境界画素を集め、
+  /// 全最小二乗で直線を当てはめる (外れ画素を除いて 2 回)。境界画素の中心は
+  /// 実際の縁より 0.5 画素内側にあるため、直線を外向きに 0.5 画素ずらす。
+  /// 点が足りない辺や、交点が元の角から大きく離れる角は元の値を使う。
+  static List<Point<double>> _refineByEdgeFit(
+      List<Point<double>> region, List<Point<double>> q, int w, int h) {
+    final inRegion = Uint8List(w * h);
+    for (final p in region) {
+      inRegion[p.y.toInt() * w + p.x.toInt()] = 1;
+    }
+    bool isBoundary(int x, int y) =>
+        x == 0 ||
+        y == 0 ||
+        x == w - 1 ||
+        y == h - 1 ||
+        inRegion[y * w + x - 1] == 0 ||
+        inRegion[y * w + x + 1] == 0 ||
+        inRegion[(y - 1) * w + x] == 0 ||
+        inRegion[(y + 1) * w + x] == 0;
+    final boundary = <Point<double>>[
+      for (final p in region)
+        if (isBoundary(p.x.toInt(), p.y.toInt())) p,
+    ];
+
+    double cx = 0, cy = 0;
+    for (final p in q) {
+      cx += p.x / 4;
+      cy += p.y / 4;
+    }
+
+    // 辺ごとの直線 (点 + 単位方向)。null なら元の辺を使う。
+    final lines = <(Offset, Offset)?>[];
+    for (int e = 0; e < 4; e++) {
+      final a = q[e];
+      final b = q[(e + 1) % 4];
+      final len = a.distanceTo(b);
+      var ux = (b.x - a.x) / len;
+      var uy = (b.y - a.y) / len;
+      var ox = a.x, oy = a.y; // 直線上の点
+      var tol = math.max(3.0, len * 0.03);
+      var ok = false;
+      for (int iter = 0; iter < 3; iter++) {
+        double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+        int n = 0;
+        for (final p in boundary) {
+          final dx = p.x - a.x, dy = p.y - a.y;
+          final t = dx * (b.x - a.x) / len + dy * (b.y - a.y) / len;
+          if (t < len * 0.1 || t > len * 0.9) continue;
+          final dist = (p.x - ox) * -uy + (p.y - oy) * ux;
+          if (dist.abs() > tol) continue;
+          sx += p.x;
+          sy += p.y;
+          sxx += p.x * p.x;
+          syy += p.y * p.y;
+          sxy += p.x * p.y;
+          n++;
+        }
+        if (n < math.max(8, len * 0.2)) {
+          ok = false;
+          break;
+        }
+        final mx = sx / n, my = sy / n;
+        final cxx = sxx / n - mx * mx;
+        final cyy = syy / n - my * my;
+        final cxy = sxy / n - mx * my;
+        // 共分散行列の主軸 = 直線の向き
+        final theta = 0.5 * math.atan2(2 * cxy, cxx - cyy);
+        var nux = math.cos(theta), nuy = math.sin(theta);
+        if (nux * ux + nuy * uy < 0) {
+          nux = -nux;
+          nuy = -nuy;
+        }
+        ux = nux;
+        uy = nuy;
+        ox = mx;
+        oy = my;
+        tol = 2.0;
+        ok = true;
+      }
+      if (!ok) {
+        lines.add(null);
+        continue;
+      }
+      // 外向き法線へ 0.5 画素
+      var nx = -uy, ny = ux;
+      if (nx * (ox - cx) + ny * (oy - cy) < 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      final o = Offset(ox + nx * 0.5, oy + ny * 0.5);
+      lines.add((o, Offset(o.dx + ux, o.dy + uy)));
+    }
+
+    // 戻り値は連続座標 (画素 i は [i, i+1] を覆う) にする。画素中心の添字に
+    // 0.5 を足すと、正規化 (÷w) したときに画像の端が 0 と 1 に一致する。
+    final maxMove = math.min(w, h) * 0.05;
+    return <Point<double>>[
+      for (int i = 0; i < 4; i++)
+        () {
+          final prev = lines[(i + 3) % 4];
+          final cur = lines[i];
+          var p = q[i];
+          final ip = prev == null || cur == null
+              ? null
+              : _lineIntersect(prev.$1, prev.$2, cur.$1, cur.$2);
+          if (ip != null) {
+            final fit = Point<double>(ip.dx, ip.dy);
+            if (fit.distanceTo(q[i]) <= maxMove) p = fit;
+          }
+          return Point<double>((p.x + 0.5).clamp(0.0, w.toDouble()),
+              (p.y + 0.5).clamp(0.0, h.toDouble()));
+        }(),
+    ];
   }
 
   /// 重心から外側へ pad (画像短辺比) だけ膨らませる。

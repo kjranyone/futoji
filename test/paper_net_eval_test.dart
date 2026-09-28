@@ -68,6 +68,8 @@ void main() {
   final simStream = _env('PAPER_SIM_STREAM', '0') == '1';
   final openRadius = int.parse(_env(
       'PAPER_OPEN', DocumentDetector.netMaskOpenRadius.toString()));
+  // 実験用: 0 なら辺の直線当てはめ (角の補正) を無効にして評価する
+  final refineEdges = _env('PAPER_REFINE', '1') == '1';
 
   final labelFiles = evalDir.existsSync()
       ? (evalDir
@@ -117,7 +119,7 @@ void main() {
           simStream ? _streamGray(imageFile.readAsBytesSync()) : (
             DocumentDetector.toGray(work), work.width, work.height);
       final flat = bundle.detectPaperQuad(gray, gw, gh,
-          pad: pad, openRadius: openRadius);
+          pad: pad, openRadius: openRadius, refineEdges: refineEdges);
       var pred = flat == null
           ? null
           : <Offset>[

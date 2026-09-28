@@ -1,4 +1,6 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' show Offset;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
@@ -281,5 +283,46 @@ void main() {
     expect(opened[50 * w + 80], 0, reason: '首は消える');
     expect(opened.every((v) => v == 0 || v == 255), isTrue);
     expect(DocumentDetector.openMask(mask, w, h, 0), same(mask));
+  });
+
+  test('辺の直線当てはめ: 斜めの四角形マスクの角を 1 画素未満で求める', () {
+    const w = 256, h = 256;
+    // 真の四隅 (連続座標, TL→TR→BR→BL)。わずかに回転・台形にする
+    const truth = <Offset>[
+      Offset(40.3, 30.7),
+      Offset(214.6, 44.2),
+      Offset(203.9, 228.5),
+      Offset(31.2, 216.8),
+    ];
+    bool inside(double x, double y) {
+      for (int i = 0; i < 4; i++) {
+        final a = truth[i], b = truth[(i + 1) % 4];
+        if ((b.dx - a.dx) * (y - a.dy) - (b.dy - a.dy) * (x - a.dx) < 0) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    final mask = Uint8List(w * h);
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        if (inside(x + 0.5, y + 0.5)) mask[y * w + x] = 255;
+      }
+    }
+    double maxErr(bool refine) {
+      final q = DocumentDetector.detectLuminance(mask, w, h,
+          workWidth: w, paperChecks: false, pad: 0, refineEdges: refine)!;
+      var worst = 0.0;
+      for (int i = 0; i < 4; i++) {
+        worst = math.max(
+            worst, (Offset(q[i].dx * w, q[i].dy * h) - truth[i]).distance);
+      }
+      return worst;
+    }
+
+    final refined = maxErr(true);
+    expect(refined, lessThan(1.0));
+    expect(refined, lessThan(maxErr(false)));
   });
 }
