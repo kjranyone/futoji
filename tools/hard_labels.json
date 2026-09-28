@@ -1,0 +1,291 @@
+{
+ "_note": "生成写真のうち BiRefNet ラベル不良で学習に一切使っていない画像 (quads.json で ok=false) から選んだ難例。四隅は元画像ピクセル座標 [TL,TR,BR,BL]。紙が画面外にはみ出す場合は辺を延長した位置 (画面外の座標) を付けた。複数枚の場合は手前の主な 1 枚。2026-09-28 目視で手付け (v2 の予測を初期値に、全角を拡大確認・修正)。どれが主な 1 枚か曖昧な画像 (0161, 0191 など) と、画面端で角の判別ができない画像は除外。",
+ "images": {
+  "hard_0001": {
+   "src": "training_data/paper_photos/images/0001.png",
+   "category": "ordinary",
+   "corners": [
+    [
+     162,
+     76
+    ],
+    [
+     1027,
+     122
+    ],
+    [
+     996,
+     1441
+    ],
+    [
+     16,
+     1349
+    ]
+   ]
+  },
+  "hard_0070": {
+   "src": "training_data/paper_photos/images/0070.png",
+   "category": "ordinary",
+   "corners": [
+    [
+     78,
+     129
+    ],
+    [
+     1020,
+     126
+    ],
+    [
+     1029,
+     1351
+    ],
+    [
+     75,
+     1349
+    ]
+   ]
+  },
+  "hard_0111": {
+   "src": "training_data/paper_photos/images/0111.png",
+   "category": "fold",
+   "corners": [
+    [
+     241,
+     298
+    ],
+    [
+     1001,
+     323
+    ],
+    [
+     925,
+     1443
+    ],
+    [
+     -2,
+     1312
+    ]
+   ]
+  },
+  "hard_0130": {
+   "src": "training_data/paper_photos/images/0130.png",
+   "category": "fold",
+   "corners": [
+    [
+     578,
+     124
+    ],
+    [
+     1159,
+     230
+    ],
+    [
+     1195,
+     963
+    ],
+    [
+     143,
+     879
+    ]
+   ]
+  },
+  "hard_0143": {
+   "src": "training_data/paper_photos/images/0143.png",
+   "category": "fold",
+   "corners": [
+    [
+     226,
+     174
+    ],
+    [
+     999,
+     234
+    ],
+    [
+     1034,
+     1253
+    ],
+    [
+     25,
+     1209
+    ]
+   ]
+  },
+  "hard_0147": {
+   "src": "training_data/paper_photos/images/0147.png",
+   "category": "fold",
+   "corners": [
+    [
+     393,
+     112
+    ],
+    [
+     1086,
+     53
+    ],
+    [
+     1253,
+     1015
+    ],
+    [
+     385,
+     1068
+    ]
+   ]
+  },
+  "hard_0150": {
+   "src": "training_data/paper_photos/images/0150.png",
+   "category": "fold",
+   "corners": [
+    [
+     -5,
+     226
+    ],
+    [
+     928,
+     143
+    ],
+    [
+     1095,
+     1100
+    ],
+    [
+     97,
+     1445
+    ]
+   ]
+  },
+  "hard_0154": {
+   "src": "training_data/paper_photos/images/0154.png",
+   "category": "overlap",
+   "corners": [
+    [
+     324,
+     117
+    ],
+    [
+     1111,
+     3
+    ],
+    [
+     1447,
+     1045
+    ],
+    [
+     380,
+     1240
+    ]
+   ]
+  },
+  "hard_0163": {
+   "src": "training_data/paper_photos/images/0163.png",
+   "category": "overlap",
+   "corners": [
+    [
+     330,
+     262
+    ],
+    [
+     1081,
+     373
+    ],
+    [
+     1082,
+     1600
+    ],
+    [
+     -81,
+     1600
+    ]
+   ]
+  },
+  "hard_0167": {
+   "src": "training_data/paper_photos/images/0167.png",
+   "category": "overlap",
+   "corners": [
+    [
+     185,
+     129
+    ],
+    [
+     1038,
+     233
+    ],
+    [
+     985,
+     1417
+    ],
+    [
+     19,
+     1319
+    ]
+   ]
+  },
+  "hard_0176": {
+   "src": "training_data/paper_photos/images/0176.png",
+   "category": "overlap",
+   "corners": [
+    [
+     90,
+     201
+    ],
+    [
+     935,
+     165
+    ],
+    [
+     1114,
+     1250
+    ],
+    [
+     6,
+     1250
+    ]
+   ]
+  },
+  "hard_0179": {
+   "src": "training_data/paper_photos/images/0179.png",
+   "category": "overlap",
+   "corners": [
+    [
+     164,
+     241
+    ],
+    [
+     845,
+     180
+    ],
+    [
+     973,
+     1187
+    ],
+    [
+     1,
+     1288
+    ]
+   ]
+  },
+  "hard_0193": {
+   "src": "training_data/paper_photos/images/0193.png",
+   "category": "overlap",
+   "corners": [
+    [
+     81,
+     196
+    ],
+    [
+     813,
+     185
+    ],
+    [
+     995,
+     1378
+    ],
+    [
+     37,
+     1447
+    ]
+   ]
+  }
+ }
+}

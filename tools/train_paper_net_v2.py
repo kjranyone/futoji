@@ -156,12 +156,12 @@ def crop_bg(rng, bgs, W, H, tries=25):
     return None
 
 
-def target_quad(rng, W, H, src_q, allow_out):
+def target_quad(rng, W, H, src_q, allow_out, area=None, center=None):
     """貼り付け先の四隅 (px, TL,TR,BR,BL)。"""
     top = np.linalg.norm(src_q[1] - src_q[0]) + np.linalg.norm(src_q[2] - src_q[3])
     side = np.linalg.norm(src_q[3] - src_q[0]) + np.linalg.norm(src_q[2] - src_q[1])
     aspect = side / max(top, 1e-6)  # 高さ/幅
-    area = rng.uniform(0.04, 0.7) * W * H
+    area = (area if area is not None else rng.uniform(0.04, 0.7)) * W * H
     pw = math.sqrt(area / aspect)
     ph = pw * aspect
     theta = rng.uniform(-np.pi, np.pi) if rng.random() < 0.35 else rng.normal(0, 0.25)
@@ -170,7 +170,9 @@ def target_quad(rng, W, H, src_q, allow_out):
     q = rect @ rot.T
     q += rng.normal(0, 0.05 * min(pw, ph), q.shape)  # 射影 (カメラの傾き) っぽい歪み
     ext = q.max(axis=0) - q.min(axis=0)
-    if allow_out:
+    if center is not None:
+        cx, cy = center
+    elif allow_out:
         cx, cy = rng.uniform(0.15, 0.85) * W, rng.uniform(0.15, 0.85) * H
     else:
         mx = max(0.0, (W - ext[0]) / 2 - 2)
@@ -180,11 +182,11 @@ def target_quad(rng, W, H, src_q, allow_out):
     return q + [cx, cy]
 
 
-def paste_paper(rng, canvas, paper, allow_out):
+def paste_paper(rng, canvas, paper, allow_out, area=None, center=None):
     """紙を canvas に貼り、(canvas, mask(0/1 float), dst_quad) を返す。"""
     H, W = canvas.shape[:2]
     _, im, src_q = paper
-    dst = target_quad(rng, W, H, src_q, allow_out)
+    dst = target_quad(rng, W, H, src_q, allow_out, area=area, center=center)
     # 始点をずらして「紙の向き」もランダムにする (180 度回転した紙など)
     k = int(rng.integers(4)) if rng.random() < 0.3 else 0
     src = np.roll(src_q, k, axis=0).astype(np.float32)
@@ -245,7 +247,49 @@ def squash(rng, gray, mask):
     return g, (m > 0.5).astype(np.float32)
 
 
-def make_composite(rng, papers, bgs, want_canvas=False):
+def _pick(rng, papers):
+    return papers[int(rng.integers(len(papers)))]
+
+
+def paste_scene(rng, canvas, papers, p_multi, p_occluder):
+    """紙を貼る。正解マスクは「主な 1 枚」の四角形全体だけ。
+
+    - 単独 (既定): 1 枚だけ貼る
+    - 複数枚 (p_multi): 奥の紙を 1〜2 枚貼ってから、主な紙を一番手前に貼る。
+      奥の紙は主な紙と同程度以下の大きさで、主な紙の近くに重なるように置く
+      (実写の「楽譜が何枚も重なった机」。v2 は複数枚を 1 つに塗ってしまう)
+    - 遮蔽物 (p_occluder): 主な紙の上に小さな紙 (付箋・カード相当) を載せる。
+      正解は隠れた部分も含めた主な紙の四角形全体 (四隅を求めたいので)
+    """
+    H, W = canvas.shape[:2]
+    u = rng.random()
+    if u < p_multi:
+        main_area = rng.uniform(0.12, 0.55)
+        cx, cy = rng.uniform(0.3, 0.7) * W, rng.uniform(0.3, 0.7) * H
+        side = math.sqrt(main_area * W * H)
+        for _ in range(int(rng.integers(1, 3))):
+            ang = rng.uniform(0, 2 * np.pi)
+            dist = rng.uniform(0.2, 0.75) * side
+            bc = (cx + math.cos(ang) * dist, cy + math.sin(ang) * dist)
+            canvas, _, _ = paste_paper(rng, canvas, _pick(rng, papers), True,
+                                       area=main_area * rng.uniform(0.6, 1.05), center=bc)
+        return paste_paper(rng, canvas, _pick(rng, papers), False,
+                           area=main_area, center=(cx, cy))
+    canvas, mask, dst = paste_paper(rng, canvas, _pick(rng, papers), rng.random() < 0.15)
+    if u < p_multi + p_occluder:
+        main_area = float(mask.sum()) / (W * H)
+        # 主な紙の内側 (辺寄り) を中心に小さな紙を載せる
+        t = rng.uniform(0.1, 0.9, 2)
+        a = dst[0] + (dst[1] - dst[0]) * t[0]
+        b = dst[3] + (dst[2] - dst[3]) * t[0]
+        oc = a + (b - a) * (t[1] if rng.random() < 0.5 else rng.choice([0.05, 0.95]))
+        canvas, _, _ = paste_paper(rng, canvas, _pick(rng, papers), True,
+                                   area=max(0.01, main_area * rng.uniform(0.05, 0.3)),
+                                   center=(float(oc[0]), float(oc[1])))
+    return canvas, mask, dst
+
+
+def make_composite(rng, papers, bgs, want_canvas=False, p_multi=0.0, p_occluder=0.0):
     """1 サンプル。want_canvas=True なら評価書き出し用に canvas と四隅も返す。"""
     W, H = rand_canvas(rng)
     r = rng.random()
@@ -272,9 +316,7 @@ def make_composite(rng, papers, bgs, want_canvas=False):
         if r < 0.20:
             mask = np.zeros((H, W), np.float32)  # 紙なし (ネガティブ)
         else:
-            allow_out = rng.random() < 0.15
-            canvas, mask, dst = paste_paper(rng, canvas, papers[int(rng.integers(len(papers)))],
-                                            allow_out)
+            canvas, mask, dst = paste_scene(rng, canvas, papers, p_multi, p_occluder)
     canvas = photometric(rng, canvas)
     k = int(rng.integers(4))  # センサー向き (縦持ち/横持ち) の 90 度回転
     if k:
@@ -300,9 +342,11 @@ def make_composite(rng, papers, bgs, want_canvas=False):
 
 
 class CompositeStream(IterableDataset):
-    def __init__(self, seed, split="train"):
+    def __init__(self, seed, split="train", p_multi=0.0, p_occluder=0.0):
         self.seed = seed
         self.split = split
+        self.p_multi = p_multi
+        self.p_occluder = p_occluder
 
     def __iter__(self):
         info = get_worker_info()
@@ -312,7 +356,8 @@ class CompositeStream(IterableDataset):
         papers, bgs = load_assets()
         pool = papers[self.split]
         while True:
-            g, m = make_composite(rng, pool, bgs)
+            g, m = make_composite(rng, pool, bgs, p_multi=self.p_multi,
+                                  p_occluder=self.p_occluder)
             yield torch.from_numpy(g[None]), torch.from_numpy(m[None])
 
 
@@ -411,12 +456,12 @@ def onnx_iou(path, vx, vy):
     return float(np.mean(ious))
 
 
-def preview(n, out_path):
+def preview(n, out_path, p_multi=0.0, p_occluder=0.0):
     rng = np.random.default_rng(1)
     papers, bgs = load_assets()
     tiles = []
     for _ in range(n):
-        g, m = make_composite(rng, papers["train"], bgs)
+        g, m = make_composite(rng, papers["train"], bgs, p_multi=p_multi, p_occluder=p_occluder)
         t = cv2.cvtColor((g * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
         cnts, _ = cv2.findContours((m > 0.5).astype(np.uint8), cv2.RETR_EXTERNAL,
                                    cv2.CHAIN_APPROX_SIMPLE)
@@ -442,16 +487,25 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "paper_seg_v2.onnx"))
     ap.add_argument("--baseline", default=os.path.join(ROOT, "assets", "models", "paper_seg.onnx"))
     ap.add_argument("--preview", type=int, default=0)
+    ap.add_argument("--p-multi", type=float, default=0.0,
+                    help="複数枚の紙 (主な 1 枚だけが正解) の割合")
+    ap.add_argument("--p-occluder", type=float, default=0.0,
+                    help="主な紙の上に小さな紙を載せる割合 (正解は主な紙の四角形全体)")
+    ap.add_argument("--init-pth", default="", help="この重みから学習を始める (例: build/paper_seg_v2.pth)")
     args = ap.parse_args()
 
     if args.preview:
         os.makedirs(os.path.join(ROOT, "build"), exist_ok=True)
-        preview(args.preview, os.path.join(ROOT, "build", "v2_preview.jpg"))
+        preview(args.preview, os.path.join(ROOT, "build", "v2_preview.jpg"),
+                p_multi=args.p_multi, p_occluder=args.p_occluder)
         return
 
     torch.manual_seed(0)
     torch.set_num_threads(args.threads)
-    model = PaperSegV2(pretrained=True)
+    model = PaperSegV2(pretrained=not args.init_pth)
+    if args.init_pth:
+        model.load_state_dict(torch.load(args.init_pth, map_location="cpu"))
+        print("init from", args.init_pth)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"params: {n_params:,} ({n_params * 4 / 1e6:.2f} MB fp32)")
 
@@ -459,7 +513,8 @@ def main():
     if os.path.exists(args.baseline):
         print(f"baseline {os.path.basename(args.baseline)} val IoU: {onnx_iou(args.baseline, vx, vy):.4f}")
 
-    loader = DataLoader(CompositeStream(seed=42), batch_size=args.batch,
+    loader = DataLoader(CompositeStream(seed=42, p_multi=args.p_multi,
+                                        p_occluder=args.p_occluder), batch_size=args.batch,
                         num_workers=args.workers, persistent_workers=args.workers > 0)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     warm = 200

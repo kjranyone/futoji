@@ -2,8 +2,10 @@
 """学習に未使用の実写評価セットを tools/heldout_labels.json から作る。
 
 出力 (QuadLabel 形式: <id>.jpg + <id>.json):
-  training_data/eval_heldout        撮影そのまま (横)
-  training_data/eval_heldout_rot90  時計回り 90 度回転 (縦持ち相当)
+  training_data/eval_heldout        実写・撮影そのまま (横)       tools/heldout_labels.json
+  training_data/eval_heldout_rot90  実写・時計回り 90 度回転 (縦持ち相当)
+  training_data/eval_hard           楽譜の難例 (重なり・折れ・はみ出し) tools/hard_labels.json
+                                    主指標は IoU (画面外に延長した角があるため)
 
 評価: ./dev.ps1 eval -Data training_data/eval_heldout
       ./dev.ps1 eval -Data training_data/eval_heldout_rot90
@@ -53,7 +55,18 @@ def main():
         rc = None if corners is None else [[h - 1 - y, x] for x, y in corners]
         write(os.path.join(ROOT, "training_data", "eval_heldout_rot90"), stem, rot, rc,
               source="manual_heldout_rot90")
-    print("done:", len(labels))
+    print("heldout:", len(labels))
+
+    with open(os.path.join(HERE, "hard_labels.json"), encoding="utf-8") as fp:
+        hard = json.load(fp)["images"]
+    for stem, item in hard.items():
+        im = cv2.imread(os.path.join(ROOT, item["src"]))
+        if im is None:
+            print("skip (画像なし):", item["src"])
+            continue
+        write(os.path.join(ROOT, "training_data", "eval_hard"), stem, im, item["corners"],
+              source="manual_hard_" + item["category"])
+    print("hard:", len(hard))
 
 
 if __name__ == "__main__":

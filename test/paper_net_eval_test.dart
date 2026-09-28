@@ -62,6 +62,9 @@ void main() {
   // 四隅の外側パディング (短辺比)。既定はアプリと同じ値。
   final pad = double.parse(
       _env('PAPER_PAD', DocumentDetector.netCornerPad.toString()));
+  // 実験用: 1 なら snapQuadToEdges を後段にかけて評価する
+  final snap = _env('PAPER_SNAP', '0') == '1';
+  final simStream = _env('PAPER_SIM_STREAM', '0') == '1';
 
   final labelFiles = evalDir.existsSync()
       ? (evalDir
@@ -103,14 +106,21 @@ void main() {
         continue;
       }
       final work = _prepareWorkImage(imageFile.readAsBytesSync());
-      final gray = DocumentDetector.toGray(work);
-      final flat = bundle.detectPaperQuad(gray, work.width, work.height,
-          pad: pad);
-      final pred = flat == null
+      // PAPER_SIM_STREAM=1: ライブ検出の入力を再現する (長辺 1920 のフレームの
+      // Y 平面を extractGrayPlane と同じく 4 画素おきに間引く → 長辺 480)。
+      final (gray, gw, gh) =
+          simStream ? _streamGray(imageFile.readAsBytesSync()) : (
+            DocumentDetector.toGray(work), work.width, work.height);
+      final flat = bundle.detectPaperQuad(gray, gw, gh, pad: pad);
+      var pred = flat == null
           ? null
           : <Offset>[
               for (int i = 0; i < 8; i += 2) Offset(flat[i], flat[i + 1]),
             ];
+      if (pred != null && snap) {
+        // 実験用: 四隅を写真のエッジへ吸着させる後処理
+        pred = DocumentDetector.snapQuadToEdges(pred, gray, gw, gh);
+      }
 
       final r = _Result(id, label, pred);
       final truth = label.corners;
@@ -155,6 +165,25 @@ img.Image _prepareWorkImage(Uint8List bytes) {
         height: workCap, interpolation: img.Interpolation.average);
   }
   return im;
+}
+
+/// ライブ検出の入力の再現: 長辺 1920 のカメラフレーム → Y 平面を 4 画素おきに間引く。
+(Uint8List, int, int) _streamGray(Uint8List bytes) {
+  var im = img.decodeImage(bytes)!;
+  const frameLong = 1920;
+  im = im.width >= im.height
+      ? img.copyResize(im, width: frameLong, interpolation: img.Interpolation.average)
+      : img.copyResize(im, height: frameLong, interpolation: img.Interpolation.average);
+  final full = DocumentDetector.toGray(im);
+  const d = 4; // camera_screen: image.width >= 1280 なら 4
+  final dw = im.width ~/ d, dh = im.height ~/ d;
+  final out = Uint8List(dw * dh);
+  for (int y = 0; y < dh; y++) {
+    for (int x = 0; x < dw; x++) {
+      out[y * dw + x] = full[y * d * im.width + x * d];
+    }
+  }
+  return (out, dw, dh);
 }
 
 /// 正解 (緑) と予測 (赤) を重ねた確認用画像。
@@ -240,7 +269,9 @@ String _report(List<_Result> all, File model) {
     ..writeln('# Paper net eval')
     ..writeln()
     ..writeln('- model: `${model.path}` (${model.lengthSync()} bytes)')
-    ..writeln('- corner pad: ${Platform.environment['PAPER_PAD'] ?? DocumentDetector.netCornerPad}')
+    ..writeln('- corner pad: ${Platform.environment['PAPER_PAD'] ?? DocumentDetector.netCornerPad}'
+        ' / edge snap: ${Platform.environment['PAPER_SNAP'] == '1' ? 'on' : 'off'}'
+        ' / input: ${Platform.environment['PAPER_SIM_STREAM'] == '1' ? 'live stream (480px)' : 'crop (1000px)'}')
     ..writeln('- samples: 紙あり ${rs.length} / 紙なし ${neg.length}')
     ..writeln('- 紙なし画像での誤検出率: ${_pct(_falsePositiveRate(neg))} '
         '(${neg.where((r) => r.detected).length}/${neg.length})')
