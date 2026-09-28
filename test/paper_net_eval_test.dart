@@ -26,11 +26,10 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:mymusicbook/services/detector.dart';
+import 'package:mymusicbook/services/fast_decode.dart';
 import 'package:mymusicbook/services/ort_ffi.dart';
 import 'package:mymusicbook/services/quad_label.dart';
 
-/// 切り抜き画面のワーク画像と同じ上限 (crop_screen.dart の _prepareWorkImage)。
-const int workCap = 1000;
 
 /// 成功判定に使う平均角誤差のしきい値 (画像対角線比)。
 const List<double> successThresholds = <double>[0.01, 0.02, 0.05];
@@ -55,6 +54,8 @@ class _Result {
 }
 
 void main() {
+  // アプリと同じ端末デコーダ (dart:ui の ImageDescriptor) を使うため
+  TestWidgetsFlutterBinding.ensureInitialized();
   final evalDir = Directory(_env('PAPER_EVAL_DIR', 'training_data/eval'));
   final modelFile = File(_env('PAPER_MODEL', 'assets/models/paper_seg.onnx'));
   final ortPath = _env('ORT_DYLIB', 'tools/ort/onnxruntime.dll');
@@ -89,7 +90,7 @@ void main() {
 
   test('paper net eval on labeled captures',
       skip: skipReason ?? false,
-      timeout: const Timeout(Duration(minutes: 20)), () {
+      timeout: const Timeout(Duration(minutes: 20)), () async {
     final bundle = OrtApiBindings.createSessionBundle(
       modelFile.readAsBytesSync(),
       libraryPath: File(ortPath).absolute.path,
@@ -107,7 +108,9 @@ void main() {
         print('skip $id: 画像がありません (${label.image})');
         continue;
       }
-      final work = _prepareWorkImage(imageFile.readAsBytesSync());
+      // 切り抜き画面と同じデコード (fast_decode.dart)。image パッケージで縮小すると
+      // 縮小方式の違いで折れのある画像などの結果が実機とずれていた
+      final work = await decodeWorkImage(imageFile.readAsBytesSync());
       // PAPER_SIM_STREAM=1: ライブ検出の入力を再現する (長辺 1920 のフレームの
       // Y 平面を extractGrayPlane と同じく 4 画素おきに間引く → 長辺 480)。
       final (gray, gw, gh) =
@@ -154,20 +157,6 @@ void main() {
     print('overlays / report: ${outDir.absolute.path}');
     expect(results, isNotEmpty);
   });
-}
-
-img.Image _prepareWorkImage(Uint8List bytes) {
-  final decoded = img.decodeImage(bytes);
-  if (decoded == null) throw const FormatException('画像を読み込めません');
-  var im = img.bakeOrientation(decoded);
-  if (im.width > workCap) {
-    im = img.copyResize(im,
-        width: workCap, interpolation: img.Interpolation.average);
-  } else if (im.height > workCap) {
-    im = img.copyResize(im,
-        height: workCap, interpolation: img.Interpolation.average);
-  }
-  return im;
 }
 
 /// ライブ検出の入力の再現: 長辺 1920 のカメラフレーム → Y 平面を 4 画素おきに間引く。
