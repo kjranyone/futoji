@@ -45,7 +45,6 @@ class _CameraScreenState extends State<CameraScreen>
   bool _starting = false;
   bool _busy = false; // 撮影〜保存中
   String? _error;
-  int _savedCount = 0;
 
   // ---- ライブ検出 ----
   final DetectionWorker _worker = DetectionWorker();
@@ -299,8 +298,9 @@ class _CameraScreenState extends State<CameraScreen>
           rawPath: raw.path,
           crop: CropResult(corners: corners, rotation: 0),
         );
-        _savedCount++;
-        if (mounted) showSnackBar(context, '$_savedCountページ目を自動保存しました');
+        if (mounted) {
+          showSnackBar(context, '${widget.document.pageCount}ページ目を自動保存しました');
+        }
       } else {
         if (!mounted) return;
         final result = await Navigator.of(context).push<CropResult>(
@@ -312,8 +312,9 @@ class _CameraScreenState extends State<CameraScreen>
           final app = context.read<AppState>();
           await app.addScannedPage(
               document: widget.document, rawPath: raw.path, crop: result);
-          _savedCount++;
-          if (mounted) showSnackBar(context, '$_savedCountページ目を保存しました');
+          if (mounted) {
+            showSnackBar(context, '${widget.document.pageCount}ページ目を保存しました');
+          }
         }
         // 手動撮影で位置が決まったら自動再武装の基準も更新
         if (_autoMode) {
@@ -380,7 +381,8 @@ class _CameraScreenState extends State<CameraScreen>
       return const Center(child: CircularProgressIndicator());
     }
 
-    final pageSoFar = _savedCount + 1;
+    // 教材の既存ページに続く番号 (addScannedPage が保存のたびに pageCount を更新する)
+    final pageSoFar = widget.document.pageCount + 1;
     final reduceColors = context.watch<AppState>().reduceColors;
     return Stack(
       children: <Widget>[
