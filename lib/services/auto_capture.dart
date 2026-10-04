@@ -17,7 +17,28 @@ class AutoCaptureController {
     this.minAreaRatio = 0.18,
     this.rearmMovement = 0.15,
     this.rearmChecks = 2,
+    this.countdownMs = 1500,
+    this.maxCapturesWithoutClear = 3,
   });
+
+  /// 紙が止まってから撮影するまでの待ち (ms)。画面にカウントダウンを出す。
+  /// 撮影の直前に気づけるようにし、動かせば取りやめられるようにするため。
+  final int countdownMs;
+
+  /// 紙が一度も画面から外れないまま、この回数を超えて撮ろうとしたら止める
+  /// (検出枠の揺れなどで同じ紙を撮り続けるのを防ぐ最後の安全装置)。
+  final int maxCapturesWithoutClear;
+
+  DateTime? _stableSince;
+  int _capturesSinceClear = 0;
+  bool _paused = false;
+
+  /// カウントダウンの開始時刻 (撮影待ちでなければ null)。
+  DateTime? get countdownStartedAt =>
+      (_lastCaptured == null && _stableSince != null && !_paused) ? _stableSince : null;
+
+  /// 同じ紙を続けて撮りそうになったので止めた (呼び出し側で自動モードを切る)。
+  bool get paused => _paused;
 
   /// 安定判定に必要な連続チェック回数 (検出周期 ~160ms → 約0.5秒)
   final int requiredStableChecks;
@@ -54,9 +75,11 @@ class AutoCaptureController {
     if (corners == null || quadArea(corners) < minAreaRatio) {
       // 紙が見えない → 参照をリセット (次に見えた紙は新規扱い)
       _stableCount = 0;
+      _stableSince = null;
       _previous = null;
       if (!inCooldown) {
         _lastCaptured = null;
+        _capturesSinceClear = 0;
       }
       return false;
     }
@@ -70,6 +93,7 @@ class AutoCaptureController {
         // さっき撮った紙がまだそこにある → 再撮影しない
         _movedCount = 0;
         _stableCount = 0;
+        _stableSince = null;
         _previous = corners;
         return false;
       }
@@ -77,6 +101,7 @@ class AutoCaptureController {
       if (_movedCount < rearmChecks) {
         // 動いたのが 1 回だけ (検出枠の揺れかもしれない) → まだ同じ紙として扱う
         _stableCount = 0;
+        _stableSince = null;
         _previous = corners;
         return false;
       }
@@ -94,14 +119,24 @@ class AutoCaptureController {
 
     if (delta <= stableTolerance) {
       _stableCount++;
+      _stableSince ??= now;
     } else {
+      // 動いた → カウントダウンをやり直す
       _stableCount = 1;
+      _stableSince = now;
     }
 
-    if (!inCooldown && _stableCount >= requiredStableChecks) {
+    final waited = now.difference(_stableSince!).inMilliseconds;
+    if (!inCooldown && _stableCount >= requiredStableChecks && waited >= countdownMs) {
+      if (_capturesSinceClear >= maxCapturesWithoutClear) {
+        _paused = true;
+        return false;
+      }
       _lastCaptured = List<Offset>.of(corners);
       _cooldownUntil = now.add(Duration(milliseconds: cooldownMs));
       _stableCount = 0;
+      _stableSince = null;
+      _capturesSinceClear++;
       return true;
     }
     return false;
@@ -124,6 +159,9 @@ class AutoCaptureController {
 
   void reset() {
     _movedCount = 0;
+    _stableSince = null;
+    _capturesSinceClear = 0;
+    _paused = false;
     _cooldownUntil = null;
     _previous = null;
     _stableCount = 0;

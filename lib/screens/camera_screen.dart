@@ -3,6 +3,7 @@ import 'dart:isolate';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:permission_handler/permission_handler.dart';
@@ -35,7 +36,7 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   CameraController? _controller;
   List<CameraDescription> _cameras = const <CameraDescription>[];
   int _cameraIndex = 0;
@@ -62,6 +63,30 @@ class _CameraScreenState extends State<CameraScreen>
   // ---- 自動撮影 ----
   bool _autoMode = false;
   final AutoCaptureController _auto = AutoCaptureController();
+
+  /// 自動撮影のカウントダウンの進み (0..1、カウントダウン中でなければ null)。
+  /// 検出結果は 0.2 秒おき程度なので、表示はフレームごとの Ticker で滑らかに進める。
+  final ValueNotifier<double?> _countdown = ValueNotifier<double?>(null);
+  late final Ticker _countdownTicker = createTicker(_onCountdownTick);
+  int _lastCountdownNumber = 0;
+
+  void _onCountdownTick(Duration _) {
+    final started = _auto.countdownStartedAt;
+    if (!_autoMode || _busy || started == null) {
+      _countdown.value = null;
+      _lastCountdownNumber = 0;
+      _countdownTicker.stop();
+      return;
+    }
+    final p = (DateTime.now().difference(started).inMilliseconds / _auto.countdownMs)
+        .clamp(0.0, 1.0);
+    _countdown.value = p;
+    final n = countdownNumber(p);
+    if (n != _lastCountdownNumber) {
+      _lastCountdownNumber = n;
+      HapticFeedback.selectionClick();
+    }
+  }
 
   @override
   void initState() {
@@ -98,6 +123,8 @@ class _CameraScreenState extends State<CameraScreen>
     _controller?.dispose();
     _worker.dispose();
     _live.dispose();
+    _countdownTicker.dispose();
+    _countdown.dispose();
     super.dispose();
   }
 
@@ -214,19 +241,29 @@ class _CameraScreenState extends State<CameraScreen>
               mirror: _frontCamera),
       ];
     }
-    var color = Colors.white70;
-    if (_autoMode && mapped != null && _auto.isArmed && _auto.stableCount >= 1) {
-      color = const Color(0xFF4CAF50);
-    }
-    _live.value = LiveOverlay(corners: mapped, color: color);
-
     if (_autoMode && !_busy) {
       final fire = _auto.feed(mapped, DateTime.now());
-      if (fire) {
+      if (_auto.paused) {
+        _pauseAutoForRepeats();
+      } else if (fire) {
         HapticFeedback.mediumImpact();
         _capture(auto: true);
+      } else if (_auto.countdownStartedAt != null && !_countdownTicker.isActive) {
+        _countdownTicker.start();
       }
     }
+    // 枠の色: 探索中は白、カウントダウン中は緑、撮影済み (入れ替え待ち) は青
+    var phase = LivePhase.searching;
+    if (_autoMode && mapped != null) {
+      if (!_auto.isArmed) {
+        phase = LivePhase.captured;
+      } else if (_auto.countdownStartedAt != null) {
+        phase = LivePhase.countdown;
+      }
+    }
+    final phaseChanged = phase != _live.value.phase;
+    _live.value = LiveOverlay(corners: mapped, phase: phase);
+    if (phaseChanged && mounted) setState(() {}); // 下部の案内文を状態に合わせる
   }
 
   Future<void> _switchCamera() async {
@@ -244,13 +281,27 @@ class _CameraScreenState extends State<CameraScreen>
     } catch (_) {}
   }
 
+  /// 紙が一度も外れないまま撮影が続いた (同じ紙を撮り続けている可能性) → 自動撮影を止める。
+  void _pauseAutoForRepeats() {
+    setState(() => _autoMode = false);
+    _auto.reset();
+    _live.value = LiveOverlay(corners: _live.value.corners);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        duration: const Duration(seconds: 6),
+        content: const Text('同じ紙を続けて撮影しそうなので、自動撮影を止めました。'
+            '次の紙に入れ替えてから再開してください'),
+        action: SnackBarAction(label: '再開', onPressed: _toggleAutoMode),
+      ));
+  }
+
   void _toggleAutoMode() {
     setState(() {
       _autoMode = !_autoMode;
       _auto.reset();
     });
-    _live.value =
-        LiveOverlay(corners: _live.value.corners, color: Colors.white70);
+    _live.value = LiveOverlay(corners: _live.value.corners);
     if (_autoMode) {
       showSnackBar(context, '自動撮影モード: 紙をかざすと自動で取り込みます');
     }
@@ -290,6 +341,19 @@ class _CameraScreenState extends State<CameraScreen>
         } catch (_) {}
         await _startImageStream(controller);
       }
+    }
+  }
+
+  /// 自動モードの案内文 (状態ごと)。
+  String _autoStatusText(int nextPage) {
+    if (_busy) return '保存中…';
+    switch (_live.value.phase) {
+      case LivePhase.countdown:
+        return 'そのまま動かさないでください (動かすと取りやめ)';
+      case LivePhase.captured:
+        return '✓ ${nextPage - 1}ページ目を保存しました。次の紙に入れ替えてください';
+      case LivePhase.searching:
+        return '紙をかざして止めると、3・2・1 と数えて撮影します';
     }
   }
 
@@ -443,6 +507,17 @@ class _CameraScreenState extends State<CameraScreen>
                     painter: _LiveQuadPainter(overlay),
                   ),
                 ),
+                // 枠の中央: カウントダウンの数字 / 撮影済みの ✓
+                IgnorePointer(
+                  child: ValueListenableBuilder<LiveOverlay>(
+                    valueListenable: _live,
+                    builder: (context, overlay, _) => ValueListenableBuilder<double?>(
+                      valueListenable: _countdown,
+                      builder: (context, progress, _) =>
+                          _QuadBadge(overlay: overlay, progress: progress),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -577,8 +652,8 @@ class _CameraScreenState extends State<CameraScreen>
             ],
           ),
         ),
-        // 自動モードのステータス
-        if (_autoMode)
+        // 自動モードのステータス (AI 仕上げ中はそちらの表示だけにする)
+        if (_autoMode && !(_busy && aiSharpen))
           Positioned(
             left: 0,
             right: 0,
@@ -593,10 +668,8 @@ class _CameraScreenState extends State<CameraScreen>
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    _busy
-                        ? '保存中…'
-                        : '紙をかざすと自動で撮影・保存します (紙を入れ替えると次を撮影)',
-                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                    _autoStatusText(pageSoFar),
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
                   ),
                 ),
               ),
@@ -628,39 +701,59 @@ class _CameraScreenState extends State<CameraScreen>
               ),
             ),
           ),
-        // シャッター
+        // シャッター (自動撮影のカウントダウン中は周りのリングが満ちていく)
         Align(
           alignment: Alignment.bottomCenter,
           child: SafeArea(
             child: Padding(
               padding: const EdgeInsets.only(bottom: 24),
-              child: GestureDetector(
-                onTap: _busy ? null : _capture,
-                child: Container(
-                  width: 76,
-                  height: 76,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.transparent,
-                    border: Border.all(color: Colors.white, width: 4),
-                  ),
-                  padding: const EdgeInsets.all(5),
-                  child: Container(
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.white,
-                    ),
-                    child: _busy
-                        ? const Padding(
-                            padding: EdgeInsets.all(20),
+              child: Stack(
+                alignment: Alignment.center,
+                children: <Widget>[
+                  ValueListenableBuilder<double?>(
+                    valueListenable: _countdown,
+                    builder: (context, p, _) => p == null
+                        ? const SizedBox(width: 90, height: 90)
+                        : SizedBox(
+                            width: 90,
+                            height: 90,
                             child: CircularProgressIndicator(
-                              strokeWidth: 3,
-                              color: Colors.black54,
+                              value: p,
+                              strokeWidth: 5,
+                              color: const Color(0xFF4CAF50),
+                              backgroundColor: Colors.white24,
                             ),
-                          )
-                        : null,
+                          ),
                   ),
-                ),
+                  GestureDetector(
+                    onTap: _busy ? null : _capture,
+                    child: Container(
+                      width: 76,
+                      height: 76,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.transparent,
+                        border: Border.all(color: Colors.white, width: 4),
+                      ),
+                      padding: const EdgeInsets.all(5),
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white,
+                        ),
+                        child: _busy
+                            ? const Padding(
+                                padding: EdgeInsets.all(20),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 3,
+                                  color: Colors.black54,
+                                ),
+                              )
+                            : null,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -671,12 +764,77 @@ class _CameraScreenState extends State<CameraScreen>
 }
 
 /// ライブオーバーレイの表示データ。
+/// 自動撮影から見たライブ枠の状態。
+enum LivePhase {
+  /// 紙を探している / 動いている (白)
+  searching,
+
+  /// 止まっていて撮影までカウントダウン中 (緑)
+  countdown,
+
+  /// この紙は撮影済み。入れ替え待ち (青)
+  captured,
+}
+
+/// カウントダウンの進み (0..1) を「3 → 2 → 1」の表示に変える。
+int countdownNumber(double progress) => (3 - (progress * 3).floor()).clamp(1, 3);
+
 class LiveOverlay {
-  const LiveOverlay({this.corners, this.color = Colors.white70});
+  const LiveOverlay({this.corners, this.phase = LivePhase.searching});
 
   /// プレビュー正規化座標の四隅 [TL,TR,BR,BL]。未検出時は null。
   final List<Offset>? corners;
-  final Color color;
+  final LivePhase phase;
+
+  Color get color => switch (phase) {
+        LivePhase.searching => Colors.white70,
+        LivePhase.countdown => const Color(0xFF4CAF50),
+        LivePhase.captured => const Color(0xFF42A5F5),
+      };
+}
+
+/// 枠の中央に出す印: カウントダウン中は大きな数字、撮影済みは ✓。
+class _QuadBadge extends StatelessWidget {
+  const _QuadBadge({required this.overlay, required this.progress});
+
+  final LiveOverlay overlay;
+  final double? progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final corners = overlay.corners;
+    if (corners == null || corners.length != 4) return const SizedBox.shrink();
+    final Widget child;
+    if (overlay.phase == LivePhase.countdown && progress != null) {
+      child = Text(
+        '${countdownNumber(progress!)}',
+        key: const ValueKey<String>('countdown-number'),
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 88,
+          fontWeight: FontWeight.w800,
+          shadows: <Shadow>[Shadow(blurRadius: 12, color: Colors.black87)],
+        ),
+      );
+    } else if (overlay.phase == LivePhase.captured) {
+      child = Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: overlay.color.withValues(alpha: 0.9),
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(Icons.check, color: Colors.white, size: 44),
+      );
+    } else {
+      return const SizedBox.shrink();
+    }
+    var cx = 0.0, cy = 0.0;
+    for (final c in corners) {
+      cx += c.dx / 4;
+      cy += c.dy / 4;
+    }
+    return Align(alignment: Alignment(cx * 2 - 1, cy * 2 - 1), child: child);
+  }
 }
 
 /// ライブ検出結果の枠 + コーナー点を描くペインター。

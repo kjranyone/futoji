@@ -16,7 +16,7 @@ void main() {
 
   group('AutoCaptureController', () {
     test('安定した紙面で requiredStableChecks 回後に撮影を指示する', () {
-      final c = AutoCaptureController(requiredStableChecks: 3);
+      final c = AutoCaptureController(countdownMs: 0, requiredStableChecks: 3);
       final q = quadAt(const Offset(0.5, 0.5), 0.3, 0.2);
       final t = DateTime(2026, 1, 1);
       expect(c.feed(q, t), isFalse);
@@ -28,8 +28,7 @@ void main() {
     });
 
     test('クールダウン明けも同じ位置の紙では再撮影しない', () {
-      final c = AutoCaptureController(
-          requiredStableChecks: 3, cooldownMs: 1000);
+      final c = AutoCaptureController(countdownMs: 0, requiredStableChecks: 3, cooldownMs: 1000);
       final q = quadAt(const Offset(0.5, 0.5), 0.3, 0.2);
       final t = DateTime(2026, 1, 1);
       c.feed(q, t);
@@ -42,7 +41,7 @@ void main() {
     });
 
     test('紙が十分動くと再武装して再撮影する', () {
-      final c = AutoCaptureController(requiredStableChecks: 3, cooldownMs: 0);
+      final c = AutoCaptureController(countdownMs: 0, requiredStableChecks: 3, cooldownMs: 0);
       final q1 = quadAt(const Offset(0.5, 0.5), 0.3, 0.2);
       final t = DateTime(2026, 1, 1);
       c.feed(q1, t);
@@ -57,9 +56,66 @@ void main() {
       expect(c.feed(q2, t2.add(const Duration(milliseconds: 480))), isTrue);
     });
 
+    test('カウントダウン: 紙が止まってから countdownMs 経つまで撮らず、動かすとやり直す', () {
+      final c = AutoCaptureController(countdownMs: 1500, cooldownMs: 0);
+      final q = quadAt(const Offset(0.5, 0.5), 0.3, 0.2);
+      final t = DateTime(2026, 1, 1);
+      expect(c.feed(q, t), isFalse);
+      expect(c.countdownStartedAt, t);
+      for (int ms = 160; ms < 1500; ms += 160) {
+        expect(c.feed(q, t.add(Duration(milliseconds: ms))), isFalse, reason: '$ms ms');
+      }
+      // 途中で 5% 動かす → やり直し
+      final moved = quadAt(const Offset(0.55, 0.5), 0.3, 0.2);
+      final t2 = t.add(const Duration(milliseconds: 1440));
+      expect(c.feed(moved, t2), isFalse);
+      expect(c.countdownStartedAt, t2);
+      expect(c.feed(moved, t2.add(const Duration(milliseconds: 1400))), isFalse);
+      expect(c.feed(moved, t2.add(const Duration(milliseconds: 1520))), isTrue);
+      expect(c.countdownStartedAt, isNull, reason: '撮影後は撮影済み (紙の入れ替え待ち)');
+    });
+
+    test('紙が一度も外れないまま撮影が続いたら 3 回で止める', () {
+      final c = AutoCaptureController(countdownMs: 0, requiredStableChecks: 2, cooldownMs: 0);
+      final t = DateTime(2026, 1, 1);
+      var now = t;
+      var shots = 0;
+      // 紙は写ったまま、大きく動いては止まるを繰り返す (= 再武装の条件を満たし続ける)
+      for (int round = 0; round < 6; round++) {
+        final q = quadAt(Offset(round.isEven ? 0.4 : 0.6, 0.5), 0.25, 0.2);
+        for (int k = 0; k < 4; k++) {
+          now = now.add(const Duration(milliseconds: 160));
+          if (c.feed(q, now)) shots++;
+        }
+      }
+      expect(shots, 3);
+      expect(c.paused, isTrue);
+      // 紙が外れて戻ってきても、reset されるまでは止まったまま (呼び出し側が自動モードを切る)
+      c.reset();
+      expect(c.paused, isFalse);
+    });
+
+    test('紙が画面から外れれば、続けて撮っても止めない', () {
+      final c = AutoCaptureController(countdownMs: 0, requiredStableChecks: 2, cooldownMs: 0);
+      final q = quadAt(const Offset(0.5, 0.5), 0.3, 0.2);
+      var now = DateTime(2026, 1, 1);
+      var shots = 0;
+      for (int page = 0; page < 6; page++) {
+        for (int k = 0; k < 3; k++) {
+          now = now.add(const Duration(milliseconds: 160));
+          if (c.feed(q, now)) shots++;
+        }
+        // 紙を入れ替える間、一瞬紙が見えなくなる
+        now = now.add(const Duration(milliseconds: 160));
+        c.feed(null, now);
+      }
+      expect(shots, 6);
+      expect(c.paused, isFalse);
+    });
+
     test('検出枠が 2 通りの形を行き来しても、同じ紙を撮り直さない', () {
       // 実機で観測: 角の 1 つが約 10% 跳ぶ枠と元の枠が交互・連続して出る
-      final c = AutoCaptureController(requiredStableChecks: 3, cooldownMs: 0);
+      final c = AutoCaptureController(countdownMs: 0, requiredStableChecks: 3, cooldownMs: 0);
       final a = quadAt(const Offset(0.5, 0.5), 0.3, 0.2);
       final b = <Offset>[...a]..[3] = a[3] + const Offset(-0.06, 0.09);
       expect(maxCornerDelta(a, b), closeTo(0.108, 0.001));
@@ -77,7 +133,7 @@ void main() {
     });
 
     test('紙が消えたら参照がリセットされ、同じ位置の紙でも撮る', () {
-      final c = AutoCaptureController(requiredStableChecks: 3, cooldownMs: 0);
+      final c = AutoCaptureController(countdownMs: 0, requiredStableChecks: 3, cooldownMs: 0);
       final q = quadAt(const Offset(0.5, 0.5), 0.3, 0.2);
       final t = DateTime(2026, 1, 1);
       c.feed(q, t);
@@ -98,7 +154,7 @@ void main() {
     });
 
     test('小さすぎる紙面では撮影しない', () {
-      final c = AutoCaptureController(requiredStableChecks: 1, minAreaRatio: 0.18);
+      final c = AutoCaptureController(countdownMs: 0, requiredStableChecks: 1, minAreaRatio: 0.18);
       final tiny = quadAt(const Offset(0.5, 0.5), 0.05, 0.04); // 面積 0.004
       final t = DateTime(2026, 1, 1);
       expect(c.feed(tiny, t), isFalse);
@@ -106,7 +162,7 @@ void main() {
     });
 
     test('動き続ける紙では撮影しない', () {
-      final c = AutoCaptureController(requiredStableChecks: 3);
+      final c = AutoCaptureController(countdownMs: 0, requiredStableChecks: 3);
       final t = DateTime(2026, 1, 1);
       for (int i = 0; i < 10; i++) {
         final q = quadAt(Offset(0.3 + 0.02 * i, 0.5), 0.3, 0.2);
@@ -116,7 +172,7 @@ void main() {
     });
 
     test('noteManualCapture で手動撮影位置を記憶する', () {
-      final c = AutoCaptureController(requiredStableChecks: 1, cooldownMs: 0);
+      final c = AutoCaptureController(countdownMs: 0, requiredStableChecks: 1, cooldownMs: 0);
       final q = quadAt(const Offset(0.5, 0.5), 0.3, 0.2);
       final t = DateTime(2026, 1, 1);
       c.noteManualCapture(q, t);
