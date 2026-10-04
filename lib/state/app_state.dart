@@ -156,6 +156,23 @@ class AppState extends ChangeNotifier {
     return page;
   }
 
+  /// 並び替えモードの結果をまとめて保存する。[ordered] の順に index を 0..n-1 で振り直し、
+  /// 表紙を新しい 1 ページ目にする。
+  Future<void> reorderPages(MusicDocument document, List<MusicPage> ordered) async {
+    for (int k = 0; k < ordered.length; k++) {
+      final p = ordered[k];
+      if (p.index != k) {
+        p.index = k;
+        await DbService.pages.put(p.id, p);
+      }
+    }
+    if (ordered.isNotEmpty) document.coverThumbPath = ordered.first.thumbPath;
+    document.updatedAt = DateTime.now().millisecondsSinceEpoch;
+    await DbService.documents.put(document.id, document);
+    await reloadPages(document.id);
+    await refreshDocuments();
+  }
+
   /// ページを delta (-1 / +1) だけ前後に移動し、index を再採番する。
   Future<void> movePage(MusicPage page, int delta) async {
     final pages = await pagesOf(page.documentId);
@@ -175,9 +192,11 @@ class AppState extends ChangeNotifier {
         await DbService.pages.put(list[k].id, list[k]);
       }
     }
-    await reloadPages(page.documentId);
+    final sorted = await reloadPages(page.documentId);
     final doc = DbService.documents.get(page.documentId);
     if (doc != null) {
+      // 1 ページ目が入れ替わったら表紙も追従させる
+      if (sorted.isNotEmpty) doc.coverThumbPath = sorted.first.thumbPath;
       doc.updatedAt = DateTime.now().millisecondsSinceEpoch;
       await DbService.documents.put(doc.id, doc);
     }
