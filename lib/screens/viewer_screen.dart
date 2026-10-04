@@ -10,6 +10,7 @@ import '../screens/camera_screen.dart';
 import '../state/app_state.dart';
 import '../widgets/corner_overlay.dart';
 import '../widgets/dialogs.dart';
+import '../widgets/edge_swipe_back.dart';
 import '../widgets/pdf_actions.dart';
 import '../widgets/stroke_layer.dart';
 
@@ -133,101 +134,116 @@ class _ViewerScreenState extends State<ViewerScreen> {
     final app = context.watch<AppState>();
     final pages = app.cachedPages(widget.document.id) ?? const <MusicPage>[];
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black87,
-        foregroundColor: Colors.white,
-        title: Text(
-          pages.isEmpty ? '-' : '${_index + 1} / ${pages.length}',
-          style: const TextStyle(fontSize: 15),
-        ),
-        actions: <Widget>[
-          IconButton(
-            tooltip: _showStrokes ? 'メモを隠す' : 'メモを表示',
-            icon: Icon(_showStrokes ? Icons.visibility : Icons.visibility_off),
-            onPressed: () => setState(() => _showStrokes = !_showStrokes),
+    // 手書き中は端からのスワイプで戻らない (端の近くに書けるように)。
+    // 戻る操作 (ボタン・システムの戻る) は「閲覧に戻る」として扱う。
+    return PopScope(
+      canPop: !_drawMode,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || !_drawMode) return;
+        setState(() {
+          _drawMode = false;
+          _eraser = false;
+        });
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          backgroundColor: Colors.black87,
+          foregroundColor: Colors.white,
+          title: Text(
+            pages.isEmpty ? '-' : '${_index + 1} / ${pages.length}',
+            style: const TextStyle(fontSize: 15),
           ),
-          IconButton(
-            icon: const Icon(Icons.add_photo_alternate_outlined),
-            onPressed: _addPages,
-          ),
-          PopupMenuButton<String>(
-            onSelected: (v) async {
-              if (v == 'pdf') {
-                promptPdfExport(context, document: widget.document);
-              } else if (v == 'note') {
-                if (pages.isEmpty) return;
-                final app = context.read<AppState>();
-                final page = pages[_index.clamp(0, pages.length - 1)];
-                final note = await showNoteDialog(context, page.note);
-                if (note != null && mounted) {
-                  await app.setPageNote(page, note);
-                  if (mounted) setState(() {});
-                }
-              } else if (v == 'delete') {
-                _deleteCurrent(pages);
-              }
-            },
-            itemBuilder: (_) => <PopupMenuEntry<String>>[
-              PopupMenuItem<String>(
-                value: 'note',
-                enabled: pages.isNotEmpty,
-                child: ListTile(
-                  leading: Icon(Icons.sticky_note_2_outlined),
-                  title: Text('ページメモを編集'),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              const PopupMenuItem<String>(
-                value: 'pdf',
-                child: ListTile(
-                  leading: Icon(Icons.picture_as_pdf),
-                  title: Text('PDF に書き出す'),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              const PopupMenuItem<String>(
-                value: 'delete',
-                child: ListTile(
-                  leading: Icon(Icons.delete_outline),
-                  title: Text('このページを削除'),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-      body: pages.isEmpty
-          ? const Center(
-              child: Text('ページがありません', style: TextStyle(color: Colors.white54)))
-          : PageView.builder(
-              controller: _pageController,
-              physics: _drawMode
-                  ? const NeverScrollableScrollPhysics()
-                  : const PageScrollPhysics(),
-              itemCount: pages.length,
-              onPageChanged: (i) {
-                setState(() {
-                  _index = i;
-                  _undoStack.clear();
-                });
-                _precacheNeighbors(pages, i);
-              },
-              itemBuilder: (context, i) => _PageCanvas(
-                page: pages[i],
-                drawMode: _drawMode,
-                showStrokes: _showStrokes,
-                eraser: _eraser,
-                penColor: _penColor,
-                penWidth: _penWidth,
-                onStrokeEnd: (s) => _onStrokeEnd(pages[i], s),
-                onEraseStart: () => _onEraseStart(pages[i]),
-                onEraseEnd: () => _onEraseEnd(pages[i]),
-              ),
+          actions: <Widget>[
+            IconButton(
+              tooltip: _showStrokes ? 'メモを隠す' : 'メモを表示',
+              icon: Icon(_showStrokes ? Icons.visibility : Icons.visibility_off),
+              onPressed: () => setState(() => _showStrokes = !_showStrokes),
             ),
-      bottomNavigationBar: pages.isEmpty ? null : _buildToolbar(pages[_index]),
+            IconButton(
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              onPressed: _addPages,
+            ),
+            PopupMenuButton<String>(
+              onSelected: (v) async {
+                if (v == 'pdf') {
+                  promptPdfExport(context, document: widget.document);
+                } else if (v == 'note') {
+                  if (pages.isEmpty) return;
+                  final app = context.read<AppState>();
+                  final page = pages[_index.clamp(0, pages.length - 1)];
+                  final note = await showNoteDialog(context, page.note);
+                  if (note != null && mounted) {
+                    await app.setPageNote(page, note);
+                    if (mounted) setState(() {});
+                  }
+                } else if (v == 'delete') {
+                  _deleteCurrent(pages);
+                }
+              },
+              itemBuilder: (_) => <PopupMenuEntry<String>>[
+                PopupMenuItem<String>(
+                  value: 'note',
+                  enabled: pages.isNotEmpty,
+                  child: ListTile(
+                    leading: Icon(Icons.sticky_note_2_outlined),
+                    title: Text('ページメモを編集'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'pdf',
+                  child: ListTile(
+                    leading: Icon(Icons.picture_as_pdf),
+                    title: Text('PDF に書き出す'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'delete',
+                  child: ListTile(
+                    leading: Icon(Icons.delete_outline),
+                    title: Text('このページを削除'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        body: pages.isEmpty
+            ? const Center(
+                child: Text('ページがありません', style: TextStyle(color: Colors.white54)))
+            : EdgeSwipeBack(
+                enabled: !_drawMode,
+                child: PageView.builder(
+                  controller: _pageController,
+                  physics: _drawMode
+                      ? const NeverScrollableScrollPhysics()
+                      : const PageScrollPhysics(),
+                  itemCount: pages.length,
+                  onPageChanged: (i) {
+                    setState(() {
+                      _index = i;
+                      _undoStack.clear();
+                    });
+                    _precacheNeighbors(pages, i);
+                  },
+                  itemBuilder: (context, i) => _PageCanvas(
+                    page: pages[i],
+                    drawMode: _drawMode,
+                    showStrokes: _showStrokes,
+                    eraser: _eraser,
+                    penColor: _penColor,
+                    penWidth: _penWidth,
+                    onStrokeEnd: (s) => _onStrokeEnd(pages[i], s),
+                    onEraseStart: () => _onEraseStart(pages[i]),
+                    onEraseEnd: () => _onEraseEnd(pages[i]),
+                  ),
+                ),
+              ),
+        bottomNavigationBar: pages.isEmpty ? null : _buildToolbar(pages[_index]),
+      ),
     );
   }
 

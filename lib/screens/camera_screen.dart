@@ -304,7 +304,9 @@ class _CameraScreenState extends State<CameraScreen>
       } else {
         if (!mounted) return;
         final result = await Navigator.of(context).push<CropResult>(
-          MaterialPageRoute<CropResult>(builder: (_) => CropScreen(file: raw!)),
+          // fullscreenDialog: 端の近くの四隅ハンドルを動かせるよう、端スワイプで戻る操作を無効にする
+          MaterialPageRoute<CropResult>(
+              fullscreenDialog: true, builder: (_) => CropScreen(file: raw!)),
         );
         if (result != null && mounted) {
           final app = context.read<AppState>();
