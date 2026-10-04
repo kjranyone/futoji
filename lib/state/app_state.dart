@@ -52,6 +52,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// バックアップの復元などで DB を直接書き換えた後に、キャッシュを捨てて読み直す。
+  Future<void> reloadAll() async {
+    _pagesCache.clear();
+    await refreshDocuments();
+  }
+
   MusicDocument? documentById(String id) {
     for (final d in _documents) {
       if (d.id == id) return d;

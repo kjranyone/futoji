@@ -1,10 +1,19 @@
-import 'package:flutter/material.dart';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
+
+import '../services/backup_service.dart';
 import '../services/self_test.dart';
 import '../services/training_capture.dart';
+import '../state/app_state.dart';
 import '../widgets/dialogs.dart';
 
-/// 設定画面。開発者向けの機能 (検出改善データの保存・自己診断) はここで ON にする。
+/// 設定画面。バックアップの書き出し・復元と、開発者向けの機能
+/// (検出改善データの保存・自己診断) の切り替え。
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -27,6 +36,108 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showSnackBar(context, '保存オン ($n 件保存済み): ${dir.path}');
   }
 
+  /// 処理中はダイアログで操作を止める (戻るボタンも無効)。
+  Future<T> _withProgress<T>(String message, Future<T> Function() task) async {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Row(
+            children: <Widget>[
+              const CircularProgressIndicator(),
+              const SizedBox(width: 20),
+              Expanded(child: Text(message)),
+            ],
+          ),
+        ),
+      ),
+    );
+    try {
+      return await task();
+    } finally {
+      if (mounted) Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _exportBackup() async {
+    try {
+      final result = await _withProgress('バックアップを作成中…', BackupService.export);
+      if (!mounted) return;
+      if (result.missingImages > 0) {
+        showSnackBar(context, '画像が見つからない ${result.missingImages} ページは含めていません');
+      }
+      await SharePlus.instance.share(
+        ShareParams(
+          files: <XFile>[XFile(result.file.path, mimeType: 'application/zip')],
+          text: 'MusicBook のバックアップ (教材 ${result.documentCount} 件・'
+              '${result.pageCount} ページ)',
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      showSnackBar(context, 'バックアップの作成に失敗しました: $e');
+    }
+  }
+
+  Future<void> _restoreBackup() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('バックアップから復元'),
+        content: const Text('バックアップ (zip) の教材を読み込みます。\n'
+            '同じ教材が端末にある場合はバックアップの内容で置き換え、'
+            'それ以外の教材はそのまま残します。'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('ファイルを選ぶ'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final picked = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: const <String>['zip'],
+    );
+    if (picked == null || !mounted) return;
+    final app = context.read<AppState>();
+    File? copy;
+    try {
+      final result = await _withProgress('復元中…', () async {
+        // Android の選択結果は content:// のことがあるので、いったん一時ファイルに写す
+        final tmp = await getTemporaryDirectory();
+        copy = File('${tmp.path}${Platform.pathSeparator}restore_source.zip');
+        final sink = copy!.openWrite();
+        await sink.addStream(picked.readAsByteStream());
+        await sink.close();
+        final r = await BackupService.restore(copy!.path);
+        await app.reloadAll();
+        return r;
+      });
+      if (!mounted) return;
+      final skipped = result.skippedPages > 0 ? ' (${result.skippedPages} ページは画像が無く省略)' : '';
+      showSnackBar(context,
+          '教材 ${result.documentCount} 件・${result.pageCount} ページを復元しました$skipped');
+    } on FormatException catch (e) {
+      if (!mounted) return;
+      showSnackBar(context, '復元できません: ${e.message}');
+    } catch (e) {
+      if (!mounted) return;
+      showSnackBar(context, '復元に失敗しました: $e');
+    } finally {
+      try {
+        await copy?.delete();
+      } catch (_) {}
+    }
+  }
+
   Future<void> _setSelfTest(bool value) async {
     await SelfTest.setEnabled(value);
     if (!mounted) return;
@@ -40,6 +151,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       appBar: AppBar(title: const Text('設定')),
       body: ListView(
         children: <Widget>[
+          _sectionHeader(theme, 'バックアップ'),
+          ListTile(
+            leading: const Icon(Icons.backup_outlined),
+            title: const Text('バックアップを書き出す'),
+            subtitle: const Text('全教材 (画像・手書きメモ・タグ) を zip にまとめ、'
+                'Google ドライブなどに保存します'),
+            onTap: _exportBackup,
+          ),
+          ListTile(
+            leading: const Icon(Icons.restore_outlined),
+            title: const Text('バックアップから復元'),
+            subtitle: const Text('書き出した zip から教材を読み込みます'),
+            onTap: _restoreBackup,
+          ),
+          const Divider(),
           ListTile(
             leading: const Icon(Icons.description_outlined),
             title: const Text('オープンソースライセンス'),
@@ -49,12 +175,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const Divider(),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-            child: Text('開発者向け',
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(color: theme.colorScheme.primary)),
-          ),
+          _sectionHeader(theme, '開発者向け'),
           SwitchListTile(
             title: const Text('検出改善用に切り抜き結果を保存'),
             subtitle: const Text('撮影画像と四隅を端末のアプリ領域に保存します。'
@@ -73,4 +194,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
+
+  Widget _sectionHeader(ThemeData theme, String label) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+        child: Text(label,
+            style: theme.textTheme.titleSmall
+                ?.copyWith(color: theme.colorScheme.primary)),
+      );
 }

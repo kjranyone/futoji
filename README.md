@@ -132,7 +132,9 @@ flutter run
 - 画像: `<アプリ領域>/musicbook/images/<pageId>.webp`, `thumbs/<pageId>.webp`
 - メタデータ: Hive box `documents` / `pages` (手書きストロークはページレコード内にベクトル保存)
 
-アンインストールすれば全データ消える。教材単位の書き出しは PDF エクスポート (手書きメモ合成済み) で行える。
+アンインストールすれば全データ消える。設定 → バックアップ で全教材を zip に書き出し (共有シートで
+Google ドライブなどに保存)、別の端末や再インストール後に復元できる。同じ教材は zip の内容で置き換え、
+手元にしかない教材は残す。zip の形式は `lib/services/backup_service.dart` の冒頭に記載。
 
 ## ライセンス
 
