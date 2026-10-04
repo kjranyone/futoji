@@ -94,4 +94,50 @@ void main() {
     await tapAt(0.5);
     expect(find.text('2 / 3'), findsOneWidget);
   });
+
+  Future<void> openViewer(WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(600, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(ChangeNotifierProvider<AppState>.value(
+      value: app,
+      child: MaterialApp(home: ViewerScreen(document: doc, initialIndex: 0)),
+    ));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('ゆっくり短く (幅の 25%) スワイプしてもページがめくれる', (tester) async {
+    await openViewer(tester);
+    // 速度の計算にはイベントの時刻が要る (省略すると全部 0 秒扱いで速度 0 になる)
+    var t = Duration.zero;
+    final g = await tester.startGesture(const Offset(400, 450));
+    for (int i = 0; i < 10; i++) {
+      t += const Duration(milliseconds: 40);
+      await g.moveBy(const Offset(-15, 0), timeStamp: t); // 計 150px = 25%、約 375px/秒
+      await tester.pump(const Duration(milliseconds: 40));
+    }
+    await g.up(timeStamp: t); // 動かしながら離す
+    await tester.pumpAndSettle();
+    expect(find.text('2 / 3'), findsOneWidget);
+  });
+
+  for (final step in <double>[12, 3]) {
+  testWidgets('2 本指で広げると拡大され、ページはめくれない (1 フレーム ${step}px)', (tester) async {
+    await openViewer(tester);
+    final a = await tester.startGesture(const Offset(260, 450));
+    final b = await tester.startGesture(const Offset(340, 450), pointer: 2);
+    var t = Duration.zero;
+    for (int i = 0; i < (120 / step).round(); i++) {
+      t += const Duration(milliseconds: 16);
+      await a.moveBy(Offset(-step, -step / 3), timeStamp: t);
+      await b.moveBy(Offset(step, step / 3), timeStamp: t);
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await a.up();
+    await b.up();
+    await tester.pumpAndSettle();
+    expect(find.text('1 / 3'), findsOneWidget);
+    final iv = tester.widget<InteractiveViewer>(find.byType(InteractiveViewer).first);
+    expect(iv.transformationController!.value.getMaxScaleOnAxis(), greaterThan(1.5));
+  });
+  }
 }

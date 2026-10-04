@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/gestures.dart' show DeviceGestureSettings, DragStartBehavior;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -12,6 +13,7 @@ import '../widgets/corner_overlay.dart';
 import '../widgets/dialogs.dart';
 import '../widgets/edge_swipe_back.dart';
 import '../widgets/pdf_actions.dart';
+import '../widgets/snappy_page_physics.dart';
 import '../widgets/stroke_layer.dart';
 
 /// 全画面ブラウズ。横スワイプでページ送り、手書きメモを重ねられる。
@@ -245,30 +247,39 @@ class _ViewerScreenState extends State<ViewerScreen> {
             : EdgeSwipeBack(
                 label: '一覧に戻る',
                 enabled: !_drawMode,
-                child: PageView.builder(
-                  controller: _pageController,
-                  physics: _drawMode
-                      ? const NeverScrollableScrollPhysics()
-                      : const PageScrollPhysics(),
-                  itemCount: pages.length,
-                  onPageChanged: (i) {
-                    setState(() {
-                      _index = i;
-                      _undoStack.clear();
-                    });
-                    _precacheNeighbors(pages, i);
-                  },
-                  itemBuilder: (context, i) => _PageCanvas(
-                    page: pages[i],
-                    drawMode: _drawMode,
-                    showStrokes: _showStrokes,
-                    eraser: _eraser,
-                    penColor: _penColor,
-                    penWidth: _penWidth,
-                    onStrokeEnd: (s) => _onStrokeEnd(pages[i], s),
-                    onEraseStart: () => _onEraseStart(pages[i]),
-                    onEraseEnd: () => _onEraseEnd(pages[i]),
-                    onTapZone: (fx) => _onTapZone(fx, pages.length),
+                // ページめくりの効き始めを早くする: 動き出しの閾値を 18 → 8px にし
+                // (拡大の判定より先にページめくりが取る)、触れた位置から指に追従させる
+                child: MediaQuery(
+                  data: MediaQuery.of(context).copyWith(
+                      gestureSettings: const DeviceGestureSettings(touchSlop: 12)),
+                  child: PageView.builder(
+                    controller: _pageController,
+                    dragStartBehavior: DragStartBehavior.down,
+                    // 吸着は SnappyPageScrollPhysics が行う (true だと標準の吸着が上に被さる)
+                    pageSnapping: false,
+                    physics: _drawMode
+                        ? const NeverScrollableScrollPhysics()
+                        : const SnappyPageScrollPhysics(),
+                    itemCount: pages.length,
+                    onPageChanged: (i) {
+                      setState(() {
+                        _index = i;
+                        _undoStack.clear();
+                      });
+                      _precacheNeighbors(pages, i);
+                    },
+                    itemBuilder: (context, i) => _PageCanvas(
+                      page: pages[i],
+                      drawMode: _drawMode,
+                      showStrokes: _showStrokes,
+                      eraser: _eraser,
+                      penColor: _penColor,
+                      penWidth: _penWidth,
+                      onStrokeEnd: (s) => _onStrokeEnd(pages[i], s),
+                      onEraseStart: () => _onEraseStart(pages[i]),
+                      onEraseEnd: () => _onEraseEnd(pages[i]),
+                      onTapZone: (fx) => _onTapZone(fx, pages.length),
+                    ),
                   ),
                 ),
               ),
