@@ -12,6 +12,7 @@ import '../services/self_test.dart';
 import '../services/training_capture.dart';
 import '../state/app_state.dart';
 import '../widgets/dialogs.dart';
+import '../widgets/edge_swipe_back.dart';
 
 /// 設定画面。バックアップの書き出し・復元と、開発者向けの機能
 /// (検出改善データの保存・自己診断) の切り替え。
@@ -259,50 +260,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(title: const Text('設定')),
-      body: ListView(
-        children: <Widget>[
-          _sectionHeader(theme, 'バックアップ'),
-          ListTile(
-            leading: const Icon(Icons.backup_outlined),
-            title: const Text('バックアップを書き出す'),
-            subtitle: const Text('全教材 (画像・手書きメモ・タグ) を zip にまとめ、'
-                '端末のフォルダや Google ドライブなどに保存します'),
-            onTap: _exportBackup,
-          ),
-          ListTile(
-            leading: const Icon(Icons.restore_outlined),
-            title: const Text('バックアップから復元'),
-            subtitle: const Text('書き出した zip から教材を読み込みます'),
-            onTap: _restoreBackup,
-          ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.description_outlined),
-            title: const Text('オープンソースライセンス'),
-            onTap: () => showLicensePage(
-              context: context,
-              applicationName: 'MusicBook',
+    return EdgeSwipeBack(
+      label: 'ホームに戻る',
+      child: Scaffold(
+        appBar: AppBar(title: const Text('設定')),
+        body: ListView(
+          children: <Widget>[
+            _sectionHeader(theme, 'バックアップ'),
+            ListTile(
+              leading: const Icon(Icons.backup_outlined),
+              title: const Text('バックアップを書き出す'),
+              subtitle: const Text('全教材 (画像・手書きメモ・タグ) を zip にまとめ、'
+                  '端末のフォルダや Google ドライブなどに保存します'),
+              onTap: _exportBackup,
             ),
-          ),
-          const Divider(),
-          _sectionHeader(theme, '開発者向け'),
-          SwitchListTile(
-            title: const Text('検出改善用に切り抜き結果を保存'),
-            subtitle: const Text('撮影画像と四隅を端末のアプリ領域に保存します。'
-                '紙面検出の学習・評価に使います'),
-            value: TrainingCapture.enabled,
-            onChanged: _setTrainingCapture,
-          ),
-          SwitchListTile(
-            title: const Text('紙面検出の自己診断を許可'),
-            subtitle: const Text('./dev.ps1 selftest が置いた画像で、'
-                '起動時に検出の速度と精度を測ります'),
-            value: SelfTest.enabled,
-            onChanged: _setSelfTest,
-          ),
-        ],
+            ListTile(
+              leading: const Icon(Icons.restore_outlined),
+              title: const Text('バックアップから復元'),
+              subtitle: const Text('書き出した zip から教材を読み込みます'),
+              onTap: _restoreBackup,
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.description_outlined),
+              title: const Text('オープンソースライセンス'),
+              onTap: () => showLicensePage(
+                context: context,
+                applicationName: 'MusicBook',
+              ),
+            ),
+            const Divider(),
+            _sectionHeader(theme, '開発者向け'),
+            SwitchListTile(
+              title: const Text('検出改善用に切り抜き結果を保存'),
+              subtitle: const Text('撮影画像と四隅を端末のアプリ領域に保存します。'
+                  '紙面検出の学習・評価に使います'),
+              value: TrainingCapture.enabled,
+              onChanged: _setTrainingCapture,
+            ),
+            SwitchListTile(
+              title: const Text('紙面検出の自己診断を許可'),
+              subtitle: const Text('./dev.ps1 selftest が置いた画像で、'
+                  '起動時に検出の速度と精度を測ります'),
+              value: SelfTest.enabled,
+              onChanged: _setSelfTest,
+            ),
+          ],
+        ),
       ),
     );
   }

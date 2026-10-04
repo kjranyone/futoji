@@ -9,6 +9,7 @@ import '../screens/camera_screen.dart';
 import '../screens/viewer_screen.dart';
 import '../state/app_state.dart';
 import '../widgets/dialogs.dart';
+import '../widgets/edge_swipe_back.dart';
 import '../widgets/pdf_actions.dart';
 
 class DocumentScreen extends StatefulWidget {
@@ -189,87 +190,90 @@ class _DocumentScreenState extends State<DocumentScreen> {
     final pages = app.cachedPages(widget.document.id) ?? const <MusicPage>[];
     final theme = Theme.of(context);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: GestureDetector(
-          onTap: () async {
-            final newTitle =
-                await showRenameDialog(context, widget.document.title);
-            if (newTitle != null) {
-              await app.renameDocument(widget.document, newTitle);
-            }
-          },
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Flexible(
-                child: Text(
-                  widget.document.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+    return EdgeSwipeBack(
+      label: 'ホームに戻る',
+      child: Scaffold(
+        appBar: AppBar(
+          title: GestureDetector(
+            onTap: () async {
+              final newTitle =
+                  await showRenameDialog(context, widget.document.title);
+              if (newTitle != null) {
+                await app.renameDocument(widget.document, newTitle);
+              }
+            },
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Flexible(
+                  child: Text(
+                    widget.document.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.edit_outlined,
+                    size: 16, color: theme.colorScheme.onSurfaceVariant),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            IconButton(
+              tooltip: 'さらにスキャン',
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              onPressed: _addPages,
+            ),
+            IconButton(
+              icon: const Icon(Icons.more_vert),
+              onPressed: _showDocumentMenu,
+            ),
+          ],
+        ),
+        body: pages.isEmpty
+            ? Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(Icons.photo_library_outlined,
+                        size: 64, color: theme.colorScheme.outline),
+                    const SizedBox(height: 12),
+                    const Text('まだページがありません'),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      icon: const Icon(Icons.photo_camera),
+                      label: const Text('スキャンする'),
+                      onPressed: _addPages,
+                    ),
+                  ],
+                ),
+              )
+            : GridView.builder(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 190,
+                  childAspectRatio: 0.74,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                ),
+                itemCount: pages.length,
+                itemBuilder: (context, i) => _PageTile(
+                  page: pages[i],
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => ViewerScreen(
+                          document: widget.document,
+                          initialIndex: i,
+                        ),
+                      ),
+                    );
+                  },
+                  onLongPress: () =>
+                      _showPageActions(i, pages.length, pages[i]),
                 ),
               ),
-              const SizedBox(width: 4),
-              Icon(Icons.edit_outlined,
-                  size: 16, color: theme.colorScheme.onSurfaceVariant),
-            ],
-          ),
-        ),
-        actions: <Widget>[
-          IconButton(
-            tooltip: 'さらにスキャン',
-            icon: const Icon(Icons.add_photo_alternate_outlined),
-            onPressed: _addPages,
-          ),
-          IconButton(
-            icon: const Icon(Icons.more_vert),
-            onPressed: _showDocumentMenu,
-          ),
-        ],
       ),
-      body: pages.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Icon(Icons.photo_library_outlined,
-                      size: 64, color: theme.colorScheme.outline),
-                  const SizedBox(height: 12),
-                  const Text('まだページがありません'),
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    icon: const Icon(Icons.photo_camera),
-                    label: const Text('スキャンする'),
-                    onPressed: _addPages,
-                  ),
-                ],
-              ),
-            )
-          : GridView.builder(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 190,
-                childAspectRatio: 0.74,
-                crossAxisSpacing: 10,
-                mainAxisSpacing: 10,
-              ),
-              itemCount: pages.length,
-              itemBuilder: (context, i) => _PageTile(
-                page: pages[i],
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => ViewerScreen(
-                        document: widget.document,
-                        initialIndex: i,
-                      ),
-                    ),
-                  );
-                },
-                onLongPress: () =>
-                    _showPageActions(i, pages.length, pages[i]),
-              ),
-            ),
     );
   }
 }

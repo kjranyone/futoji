@@ -16,6 +16,7 @@ import '../services/fast_decode.dart';
 import '../services/paper_net.dart';
 import '../state/app_state.dart';
 import '../widgets/dialogs.dart';
+import '../widgets/edge_swipe_back.dart';
 import 'crop_screen.dart';
 
 /// 読み取り画面。
@@ -339,9 +340,12 @@ class _CameraScreenState extends State<CameraScreen>
     }
     return PopScope(
       canPop: !_busy,
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: _buildBody(context),
+      child: EdgeSwipeBack(
+        label: '撮影を終える',
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: _buildBody(context),
+        ),
       ),
     );
   }

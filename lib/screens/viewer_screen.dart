@@ -215,6 +215,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
             ? const Center(
                 child: Text('ページがありません', style: TextStyle(color: Colors.white54)))
             : EdgeSwipeBack(
+                label: '一覧に戻る',
                 enabled: !_drawMode,
                 child: PageView.builder(
                   controller: _pageController,

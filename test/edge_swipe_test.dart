@@ -68,6 +68,7 @@ void main() {
   // ビューアと同じく横スクロール (PageView) がある画面
   Widget pagerScreen({bool enabled = true}) => Scaffold(
         body: EdgeSwipeBack(
+          label: '一覧に戻る',
           enabled: enabled,
           child: PageView(children: const <Widget>[
             Center(child: Text('次の画面')),
@@ -96,5 +97,31 @@ void main() {
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }
+  });
+
+  testWidgets('引いている間は「一覧に戻る」が出て、手前で離すと戻らず引っ込む', (tester) async {
+    await pushPage(tester, fullscreenDialog: false, page: pagerScreen());
+    final indicator = find.byKey(const ValueKey<String>('edge-swipe-indicator'));
+    expect(indicator, findsNothing);
+
+    final gesture = await tester.startGesture(const Offset(5, 300));
+    await gesture.moveBy(const Offset(40, 0)); // 戻れる距離 (96) の手前
+    await tester.pump();
+    expect(indicator, findsOneWidget);
+    expect(find.text('一覧に戻る'), findsOneWidget);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(indicator, findsNothing);
+    expect(find.text('次の画面'), findsOneWidget, reason: '手前で離したら戻らない');
+
+    // 戻れる位置まで引いて離すと戻る
+    final g2 = await tester.startGesture(const Offset(5, 300));
+    await g2.moveBy(const Offset(60, 0));
+    await g2.moveBy(const Offset(60, 0));
+    await tester.pump();
+    await g2.up();
+    await tester.pumpAndSettle();
+    expect(find.text('開く'), findsOneWidget);
   });
 }
