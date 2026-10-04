@@ -42,6 +42,7 @@ class PaperNet {
 
   static Future<void> _load() async {
     try {
+      await OrtApiBindings.preparePlatform();
       final bytes = (await rootBundle.load(_assetPath)).buffer.asUint8List();
       // FFI セッション生成はどの isolate でも可。ここはメイン isolate。
       _bundle = OrtApiBindings.createSessionBundle(bytes);

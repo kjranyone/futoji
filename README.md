@@ -46,6 +46,9 @@
   [docs/DATASET.md](docs/DATASET.md) にまとめている。
   `eval_web` (Web 収集の OOD キャナリー) では現行モデルは紙あり 5 枚中クリーン成功 0 —
   アプリの撮り方以外の画像には汎化していない既知の限界
+- リリース手順 (署名・ビルド・ストア申告) は [docs/RELEASE.md](docs/RELEASE.md)、
+  プライバシーポリシーは [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md)
+- 開発者向け機能 (検出改善用の切り抜き保存・自己診断) は アプリの 設定 → 開発者向け で ON にする (既定 OFF)
 - 画像認識モデルの選定記録は [docs/IMAGE_RECOGNITION_RESEARCH.md](docs/IMAGE_RECOGNITION_RESEARCH.md) (MIT/Apache 系の軽量モデル比較)
 
 ## ディレクトリ構成
@@ -112,7 +115,8 @@ flutter run              # デバッグ実行
 flutter install          # ビルド済み APK を実機へインストール
 ```
 
-iOS (macOS + Xcode が必要):
+iOS (macOS + Xcode が必要。紙面検出の ORT は `ios/Podfile` の `onnxruntime-c`。
+iOS は未検証で、確認項目は [docs/RELEASE.md](docs/RELEASE.md)):
 
 ```bash
 cd ios && pod install && cd ..
@@ -128,7 +132,7 @@ flutter run
 - 画像: `<アプリ領域>/musicbook/images/<pageId>.webp`, `thumbs/<pageId>.webp`
 - メタデータ: Hive box `documents` / `pages` (手書きストロークはページレコード内にベクトル保存)
 
-アンインストールすれば全データ消えるため、バックアップはアプリ領域のコピーで可能 (今後エクスポート機能を追加予定)。
+アンインストールすれば全データ消える。教材単位の書き出しは PDF エクスポート (手書きメモ合成済み) で行える。
 
 ## ライセンス
 
@@ -157,8 +161,6 @@ flutter run
 
 ## 今後の拡張アイデア
 
-- PDF エクスポート (手書きメモ合成)
 - ギャラリーからの取り込み
 - ページ並べ替え (ドラッグ&ドロップ)
-- 曲名 / タグ検索
 - 自動連写 (ページめくり検出)

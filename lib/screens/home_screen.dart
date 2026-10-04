@@ -6,9 +6,9 @@ import 'package:provider/provider.dart';
 import '../models/music_document.dart';
 import '../screens/camera_screen.dart';
 import '../screens/document_screen.dart';
+import '../screens/settings_screen.dart';
 import '../services/db_service.dart';
 import '../services/search.dart';
-import '../services/training_capture.dart';
 import '../state/app_state.dart';
 import '../utils.dart';
 import '../widgets/dialogs.dart';
@@ -29,22 +29,6 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
-  }
-
-  /// 切り抜き確定時に画像 + 四隅を学習・評価データとして保存するかを切り替える。
-  Future<void> _toggleTrainingCapture() async {
-    final next = !TrainingCapture.enabled;
-    await TrainingCapture.setEnabled(next);
-    if (!mounted) return;
-    setState(() {});
-    if (!next) {
-      showSnackBar(context, '切り抜き結果の保存をオフにしました');
-      return;
-    }
-    final dir = await TrainingCapture.directory();
-    final n = await TrainingCapture.count();
-    if (!mounted) return;
-    showSnackBar(context, '保存オン ($n 件保存済み): ${dir.path}');
   }
 
   List<MusicDocument> _filter(List<MusicDocument> docs) {
@@ -89,17 +73,12 @@ class _HomeScreenState extends State<HomeScreen> {
               });
             },
           ),
-          PopupMenuButton<String>(
-            onSelected: (v) {
-              if (v == 'collect') _toggleTrainingCapture();
-            },
-            itemBuilder: (_) => <PopupMenuEntry<String>>[
-              CheckedPopupMenuItem<String>(
-                value: 'collect',
-                checked: TrainingCapture.enabled,
-                child: const Text('検出改善用に切り抜き結果を保存'),
-              ),
-            ],
+          IconButton(
+            tooltip: '設定',
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+            ),
           ),
         ],
       ),

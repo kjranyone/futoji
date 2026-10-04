@@ -308,7 +308,7 @@ switch ($Command) {
         # 保存処理の出力 (紙ありの画像のみ) も回収して目視確認できるようにする
         $saved = @(& $adb -s $id shell ls $SelfTestDir | Where-Object { $_ -like 'saved_*.webp' })
         foreach ($f in $saved) { & $adb -s $id pull "$SelfTestDir/$($f.Trim())" (Join-Path $out $f.Trim()) | Out-Null }
-        if (-not ($lines | Select-String 'MMB_SELFTEST DONE')) { throw '自己診断が完了しませんでした (上のログを確認)' }
+        if (-not ($lines | Select-String 'MMB_SELFTEST DONE')) { throw '自己診断が完了しませんでした (アプリの 設定 → 開発者向け → 「紙面検出の自己診断を許可」が ON か、上のログを確認)' }
         Write-Host "結果: $out/result.json" -ForegroundColor Green
     }
     'pull' {

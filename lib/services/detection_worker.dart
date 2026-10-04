@@ -84,6 +84,11 @@ class DetectionWorker {
   Future<void> start(Uint8List modelBytes) async {
     if (_started) return;
     _started = true;
+    try {
+      await OrtApiBindings.preparePlatform();
+    } catch (e) {
+      if (kDebugMode) debugPrint('WorkerNet: ORT platform init failed: $e');
+    }
     final replyPort = ReceivePort();
     _replyPort = replyPort;
     final handshake = ReceivePort();
@@ -102,8 +107,9 @@ class DetectionWorker {
     _sendPort!.send(_replyPort!.sendPort);
     // リプライの常設ディスパッチ: 'ready' 応答と検出結果の両方を受ける
     _replyPort!.listen(_onWorkerMessage);
-    // net モデルを送って初期化
-    _sendPort!.send(<Object>['init', modelBytes]);
+    // net モデルを送って初期化 (iOS は ORT の入口アドレスも渡す。isolate 間で共有されないため)
+    _sendPort!.send(
+        <Object>['init', modelBytes, OrtApiBindings.iosApiBaseAddress ?? 0]);
   }
 
   /// ワーカーからのメッセージ ('ready' 応答 / 検出結果) を振り分ける。
@@ -173,8 +179,9 @@ class DetectionWorker {
       }
       if (message is List && message.isNotEmpty && message[0] == 'init') {
         try {
-          _workerState.netBundle =
-              OrtApiBindings.createSessionBundle(message[1] as Uint8List);
+          _workerState.netBundle = OrtApiBindings.createSessionBundle(
+              message[1] as Uint8List,
+              apiBaseAddress: message.length > 2 ? message[2] as int : null);
           netReady = true;
         } catch (e) {
           netReady = false;

@@ -38,7 +38,7 @@ training_data/
 ## 改善サイクル
 
 ```
-① アプリで使う        カメラ → 切り抜き画面で四隅を直す → 「検出改善用に保存」を ON
+① アプリで使う        設定 → 開発者向け →「検出改善用に切り抜き結果を保存」を ON → 撮影 → 切り抜き画面で四隅を直す
 ② 取り込み    ./dev.ps1 pull                     → training_data/eval
 ③ 昇格        ./dev.ps1 promote [--IncludeUnedited]
               edited=true (四隅を手で直した) のみ昇格。昇格すると eval/ からは移動
@@ -48,7 +48,7 @@ training_data/
 ⑤ 評価        ./dev.ps1 eval -Model build/paper_seg_v2.onnx -Data training_data/eval_heldout
                (eval_heldout_rot90 / eval_hard / eval_web も。現行モデルと必ず比較)
                合成の条件別内訳: tools/eval_synthetic.py -M assets/models/paper_seg.onnx
-⑥ 実機診断    ./dev.ps1 install → ./dev.ps1 selftest (切り抜き経路とライブ検出経路)
+⑥ 実機診断    ./dev.ps1 install → 設定で「紙面検出の自己診断を許可」を ON → ./dev.ps1 selftest
 ⑦ 採用        Copy-Item build/paper_seg_v2.onnx assets/models/paper_seg.onnx → install
 ```
 

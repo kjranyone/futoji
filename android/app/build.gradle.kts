@@ -1,8 +1,17 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// リリース署名 (アップロード鍵)。android/key.properties は git 管理外 (docs/RELEASE.md)
+val keystoreProperties = Properties().apply {
+    val f = rootProject.file("key.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val hasReleaseKey = keystoreProperties.getProperty("storeFile") != null
 
 android {
     namespace = "com.kjranyone.mymusicbook"
@@ -54,11 +63,30 @@ android {
         }
     }
 
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            if (hasReleaseKey) signingConfig = signingConfigs.getByName("release")
+        }
+    }
+}
+
+// 鍵が無いままリリースをビルドしたら止める (debug 署名で出荷しないため)。debug ビルドには影響しない
+tasks.matching { it.name.matches(Regex("(assemble|bundle|package)Release")) }.configureEach {
+    doFirst {
+        if (!hasReleaseKey) {
+            throw GradleException(
+                "android/key.properties がありません。リリース署名の設定は docs/RELEASE.md を参照")
         }
     }
 }

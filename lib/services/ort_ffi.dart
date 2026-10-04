@@ -2,12 +2,14 @@
 // ignore_for_file: unused_field, unused_element
 
 import 'dart:ffi';
+import 'dart:io';
 import 'dart:typed_data';
 
 // C API の関数名はヘッダどおりの PascalCase を維持するため lint を抑止
 // ignore_for_file: non_constant_identifier_names, library_private_types_in_public_api
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/services.dart' show MethodChannel;
 
 import 'detector.dart';
 
@@ -380,14 +382,34 @@ class OrtApiBindings {
   late final _GetErrorDart getErrorMessage =
       api.ref.GetErrorMessage.asFunction<_GetErrorDart>();
 
-  /// libonnxruntime4jni.so から OrtApi を取得する。
+  /// iOS: AppDelegate が返す `OrtGetApiBase()` のアドレス ([preparePlatform] で取得)。
+  /// iOS の ORT (CocoaPods onnxruntime-c) は静的リンクで .so が無く、シンボルも
+  /// strip されるため、ネイティブ側で呼んだ結果のポインタを受け取って使う。
+  /// isolate 間では共有されないので、ワーカーには値を渡すこと。
+  static int? iosApiBaseAddress;
+
+  /// プラットフォーム固有の準備 (iOS のみ)。メイン isolate で ORT を使う前に呼ぶ。
+  static Future<void> preparePlatform() async {
+    if (!Platform.isIOS || iosApiBaseAddress != null) return;
+    iosApiBaseAddress =
+        await const MethodChannel('mymusicbook/ort').invokeMethod<int>('apiBase');
+  }
+
+  /// libonnxruntime4jni.so (Android) から OrtApi を取得する。
   ///
   /// [libraryPath] を渡すと別の ORT (例: 評価ハーネス用の Windows 版
   /// onnxruntime.dll, 1.16 以上) を読み込む。C API は OS 間で共通。
-  static OrtApiBindings load({String? libraryPath}) {
-    final lib = DynamicLibrary.open(libraryPath ?? 'libonnxruntime.so');
-    final base = lib.lookupFunction<Pointer<OrtApiBaseStruct> Function(),
-        Pointer<OrtApiBaseStruct> Function()>('OrtGetApiBase')();
+  /// [apiBaseAddress] (iOS) があればライブラリを開かずにそれを使う。
+  static OrtApiBindings load({String? libraryPath, int? apiBaseAddress}) {
+    final addr = apiBaseAddress ?? iosApiBaseAddress;
+    final Pointer<OrtApiBaseStruct> base;
+    if (libraryPath == null && addr != null && addr != 0) {
+      base = Pointer<OrtApiBaseStruct>.fromAddress(addr);
+    } else {
+      final lib = DynamicLibrary.open(libraryPath ?? 'libonnxruntime.so');
+      base = lib.lookupFunction<Pointer<OrtApiBaseStruct> Function(),
+          Pointer<OrtApiBaseStruct> Function()>('OrtGetApiBase')();
+    }
     // API バージョン 16 を要求 (vtable の並びは以後互換で固定)
     final getApi = base.ref.GetApi
         .asFunction<Pointer<OrtApiStruct> Function(int)>();
@@ -440,8 +462,9 @@ class OrtApiBindings {
   /// モデルバイト列からセッション一式 (入出力テンソル束縛済み) を作る。
   /// どの isolate から呼んでもよい (C API はスレッドセーフ)。
   static OrtSessionBundle createSessionBundle(Uint8List modelBytes,
-      {String? libraryPath}) {
-    final bindings = OrtApiBindings.load(libraryPath: libraryPath);
+      {String? libraryPath, int? apiBaseAddress}) {
+    final bindings =
+        OrtApiBindings.load(libraryPath: libraryPath, apiBaseAddress: apiBaseAddress);
     final modelBuf = calloc<Uint8>(modelBytes.length);
     modelBuf.asTypedList(modelBytes.length).setAll(0, modelBytes);
 

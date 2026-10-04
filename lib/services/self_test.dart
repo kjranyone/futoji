@@ -32,10 +32,19 @@ class SelfTest {
 
   static const String tag = 'MMB_SELFTEST';
   static const String _lastTokenKey = 'selftest_last_token';
+  static const String _enabledKey = 'selftest_enabled';
+
+  /// 設定画面の「紙面検出の自己診断を許可」。OFF (既定) なら目印があっても何もしない。
+  static bool get enabled =>
+      DbService.settings.get(_enabledKey, defaultValue: false) as bool;
+
+  static Future<void> setEnabled(bool value) =>
+      DbService.settings.put(_enabledKey, value);
 
   static void _log(String message) => debugPrint('$tag $message');
 
   static Future<void> runIfRequested() async {
+    if (!enabled) return;
     try {
       final base = (await TrainingCapture.directory()).parent;
       final dir = Directory('${base.path}${Platform.pathSeparator}selftest');
