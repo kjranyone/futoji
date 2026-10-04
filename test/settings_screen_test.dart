@@ -7,8 +7,10 @@ import 'package:hive_ce/hive.dart';
 import 'package:mymusicbook/screens/settings_screen.dart';
 import 'package:mymusicbook/services/self_test.dart';
 import 'package:mymusicbook/services/training_capture.dart';
+import 'package:mymusicbook/state/app_state.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import 'package:provider/provider.dart';
 
 class _FakePathProvider extends PathProviderPlatform
     with MockPlatformInterfaceMixin {
@@ -45,18 +47,28 @@ void main() {
     expect(TrainingCapture.enabled, isFalse);
     expect(SelfTest.enabled, isFalse);
 
-    await tester.pumpWidget(const MaterialApp(home: SettingsScreen()));
+    // 全項目が 1 画面に収まる大きさにする (下の方の開発者向けトグルもタップできるように)
+    await tester.binding.setSurfaceSize(const Size(800, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final app = AppState();
+    expect(app.aiSharpen, isFalse);
+    await tester.pumpWidget(ChangeNotifierProvider<AppState>.value(
+      value: app,
+      child: const MaterialApp(home: SettingsScreen()),
+    ));
     expect(find.text('オープンソースライセンス'), findsOneWidget);
 
     await tester.runAsync(() async {
       await tester.tap(find.text('検出改善用に切り抜き結果を保存'));
       await tester.tap(find.text('紙面検出の自己診断を許可'));
+      await tester.tap(find.text('AI でくっきり'));
       await Future<void>.delayed(const Duration(milliseconds: 200));
     });
     await tester.pump();
 
     expect(TrainingCapture.enabled, isTrue);
     expect(SelfTest.enabled, isTrue);
+    expect(app.aiSharpen, isTrue);
     final switches = tester.widgetList<SwitchListTile>(find.byType(SwitchListTile));
     expect(switches.every((s) => s.value), isTrue);
   });

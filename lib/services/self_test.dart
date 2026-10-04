@@ -7,11 +7,13 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
+import 'ai_sharpen.dart';
 import 'db_service.dart';
 import 'detection_worker.dart';
 import 'detector.dart';
 import 'fast_decode.dart';
 import 'image_pipeline.dart';
+import 'ort_ffi.dart';
 import 'paper_net.dart';
 import 'quad_label.dart';
 import 'storage.dart';
@@ -60,11 +62,64 @@ class SelfTest {
         return;
       }
       await DbService.settings.put(_lastTokenKey, token);
+      // AIBENCH があれば AI シャープ化の速度比較だけを行う (ORT の設定を端末で決めるため)
+      final bench = File('${dir.path}${Platform.pathSeparator}AIBENCH');
+      if (await bench.exists()) {
+        await bench.delete();
+        await _aiBench(dir);
+        return;
+      }
       await _run(dir);
     } catch (e, st) {
       _log('ERROR $e\n$st');
     }
   }
+
+  /// AI シャープ化の 1 タイルあたりの時間を ORT の設定ごとに測る。
+  /// 同梱モデルに加え、selftest/ に置いた sr_*.onnx (別モデルの候補) も測る。
+  static Future<void> _aiBench(Directory dir) async {
+    _log('AIBENCH START');
+    await OrtApiBindings.preparePlatform();
+    final apiBase = OrtApiBindings.iosApiBaseAddress;
+    final models = <String, Uint8List>{
+      'bundled': (await rootBundle.load(AiSharpen.assetPath)).buffer.asUint8List(),
+      for (final f in dir.listSync().whereType<File>())
+        if (f.path.endsWith('.onnx'))
+          f.uri.pathSegments.last: f.readAsBytesSync(),
+    };
+    const spin = <String, String>{'session.intra_op.allow_spinning': '0'};
+    const configs = <OrtSessionConfig>[
+      OrtSessionConfig(),
+      OrtSessionConfig(intraOpThreads: 4),
+      OrtSessionConfig(intraOpThreads: 8),
+      OrtSessionConfig(
+          intraOpThreads: 1,
+          executionProvider: 'XNNPACK',
+          providerOptions: <String, String>{'intra_op_num_threads': '4'},
+          configEntries: spin),
+      OrtSessionConfig(
+          intraOpThreads: 1,
+          executionProvider: 'XNNPACK',
+          providerOptions: <String, String>{'intra_op_num_threads': '8'},
+          configEntries: spin),
+    ];
+    for (final m in models.entries) {
+      // ファイル名の _t256 などがタイルの大きさ (無ければ 128)
+      final t = int.tryParse(
+              RegExp(r'_t(\d+)').firstMatch(m.key)?.group(1) ?? '') ??
+          AiSharpen.tile;
+      final lines = await _benchInIsolate(m.value, configs, apiBase, t);
+      for (final l in lines) {
+        _log('AIBENCH ${m.key} $l');
+      }
+    }
+    _log('DONE');
+  }
+
+  static Future<List<String>> _benchInIsolate(Uint8List model,
+          List<OrtSessionConfig> configs, int? apiBase, int tileSize) =>
+      Isolate.run(() => AiSharpen.benchmark(model, configs,
+          apiBaseAddress: apiBase, tileSize: tileSize));
 
   static Future<void> _run(Directory dir) async {
     _log('START ${dir.path}');

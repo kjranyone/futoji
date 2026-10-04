@@ -49,6 +49,8 @@
 - リリース手順 (署名・ビルド・ストア申告) は [docs/RELEASE.md](docs/RELEASE.md)、
   プライバシーポリシーは [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md)
 - 開発者向け機能 (検出改善用の切り抜き保存・自己診断) は アプリの 設定 → 開発者向け で ON にする (既定 OFF)
+- 設定 → 画質 →「AI でくっきり」(既定 OFF) で、保存時に紙面を端末内の AI (Real-ESRGAN 軽量版を int8 化)
+  でシャープ化する (実機 1 ページ約 9 秒)。選定と実測は [docs/IMAGE_RECOGNITION_RESEARCH.md](docs/IMAGE_RECOGNITION_RESEARCH.md) の 6c
 - 画像認識モデルの選定記録は [docs/IMAGE_RECOGNITION_RESEARCH.md](docs/IMAGE_RECOGNITION_RESEARCH.md) (MIT/Apache 系の軽量モデル比較)
 
 ## ディレクトリ構成

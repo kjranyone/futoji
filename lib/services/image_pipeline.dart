@@ -1,16 +1,19 @@
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image/image.dart' as img;
 
 import '../models/crop_result.dart';
+import 'ai_sharpen.dart';
 import 'auto_capture.dart';
 import 'color_quantizer.dart';
 import 'fast_decode.dart';
+import 'ort_ffi.dart';
 import 'storage.dart';
 import 'warper.dart';
 
@@ -58,6 +61,7 @@ class ImagePipeline {
     required String pageId,
     CropResult? liveFrame,
     bool reduceColors = false,
+    bool aiSharpen = false,
     Map<String, int>? timings,
   }) async {
     final sw = Stopwatch()..start();
@@ -86,8 +90,9 @@ class ImagePipeline {
     // 実機で約 11 秒かかっていた)。長辺 2600px は A4 を 300dpi よりやや粗めにした上限。
     final decoded = await decodeImageCapped(bytes, cap: _saveCap);
     lap('decode');
-    final prepared = await Isolate.run(() =>
-        _prepareScanData(decoded, corners, rotationDeg, frame, reduceColors));
+    final ai = aiSharpen ? await _aiArgs() : null;
+    final prepared = await Isolate.run(() => _prepareScanData(
+        decoded, corners, rotationDeg, frame, reduceColors, ai));
     lap('isolate');
     timings?.addAll(prepared.timings);
 
@@ -122,11 +127,26 @@ class ImagePipeline {
 /// 保存画像の長辺上限。
 const int _saveCap = 2600;
 
+Uint8List? _aiModel;
+
+/// AI シャープ化を isolate で動かすための [モデル, ORT の入口アドレス (iOS)]。
+/// 読めなければ null (AI なしで保存する)。
+Future<List<Object?>?> _aiArgs() async {
+  try {
+    _aiModel ??= (await rootBundle.load(AiSharpen.assetPath)).buffer.asUint8List();
+    await OrtApiBindings.preparePlatform();
+    return <Object?>[_aiModel, OrtApiBindings.iosApiBaseAddress];
+  } catch (e) {
+    debugPrint('AiSharpen: unavailable ($e)');
+    return null;
+  }
+}
+
 /// isolate 上で実行する重い前処理 (回転→台形補正→BMP化)。
 /// [decoded] は正立・長辺 [_saveCap] 以下にデコード済みの画像。
 /// クロージャ経由で this を送らないよう top-level 関数にしてある。
 _Prepared _prepareScanData(img.Image decoded, List<List<double>> corners,
-    int rotationDeg, List<Object?>? frame, bool reduceColors) {
+    int rotationDeg, List<Object?>? frame, bool reduceColors, List<Object?>? ai) {
     final timings = <String, int>{};
     final sw = Stopwatch()..start();
     void lap(String name) {
@@ -170,7 +190,7 @@ _Prepared _prepareScanData(img.Image decoded, List<List<double>> corners,
     final outW = size.width.round();
     final outH = size.height.round();
 
-    final warpedBytes = warpPerspectiveRgb(
+    var warpedBytes = warpPerspectiveRgb(
       src: im.getBytes(),
       srcW: srcW,
       srcH: srcH,
@@ -180,6 +200,17 @@ _Prepared _prepareScanData(img.Image decoded, List<List<double>> corners,
       outH: outH,
     );
     lap('warp');
+
+    // AI シャープ化 (設定で ON のとき)。失敗しても補正済みの画像で保存を続ける
+    if (ai != null) {
+      try {
+        warpedBytes = AiSharpen.process(warpedBytes, outW, outH, ai[0] as Uint8List,
+            apiBaseAddress: ai[1] as int?);
+      } catch (e) {
+        debugPrint('AiSharpen: failed ($e)');
+      }
+      lap('ai');
+    }
 
     // 減色オプション: 色域を分析してパレット数を自動決定し、色数を絞る
     // (白黒文書は 8 色程度に収まり、ファイルも小さくなる)

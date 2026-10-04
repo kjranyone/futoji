@@ -255,6 +255,31 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
+  /// ページを保存する。AI 仕上げが ON のときは、その間カメラのプレビューと
+  /// フレーム配信を止めて CPU を空ける (止めないと推論が実機で約 2 倍遅くなった)。
+  Future<void> _savePage(AppState app, String rawPath, CropResult crop) async {
+    final controller = _controller;
+    final pause = app.aiSharpen && controller != null && controller.value.isInitialized;
+    if (pause) {
+      try {
+        await controller.stopImageStream();
+      } catch (_) {}
+      try {
+        await controller.pausePreview();
+      } catch (_) {}
+    }
+    try {
+      await app.addScannedPage(document: widget.document, rawPath: rawPath, crop: crop);
+    } finally {
+      if (pause && mounted && controller.value.isInitialized) {
+        try {
+          await controller.resumePreview();
+        } catch (_) {}
+        await _startImageStream(controller);
+      }
+    }
+  }
+
   Future<void> _capture({bool auto = false}) async {
     final controller = _controller;
     if (controller == null ||
@@ -294,11 +319,7 @@ class _CameraScreenState extends State<CameraScreen>
           if (mounted) showSnackBar(context, '紙面を検出できませんでした');
           return;
         }
-        await app.addScannedPage(
-          document: widget.document,
-          rawPath: raw.path,
-          crop: CropResult(corners: corners, rotation: 0),
-        );
+        await _savePage(app, raw.path, CropResult(corners: corners, rotation: 0));
         if (mounted) {
           showSnackBar(context, '${widget.document.pageCount}ページ目を自動保存しました');
         }
@@ -311,8 +332,7 @@ class _CameraScreenState extends State<CameraScreen>
         );
         if (result != null && mounted) {
           final app = context.read<AppState>();
-          await app.addScannedPage(
-              document: widget.document, rawPath: raw.path, crop: result);
+          await _savePage(app, raw.path, result);
           if (mounted) {
             showSnackBar(context, '${widget.document.pageCount}ページ目を保存しました');
           }
@@ -548,6 +568,32 @@ class _CameraScreenState extends State<CameraScreen>
                         ? '保存中…'
                         : '紙をかざすと自動で撮影・保存します (紙を入れ替えると次を撮影)',
                     style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        // AI 仕上げは 1 ページ 10 秒ほどかかるので、待っている理由を出す
+        if (_busy && context.watch<AppState>().aiSharpen)
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 116),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Icon(Icons.auto_awesome, size: 16, color: Colors.white),
+                      SizedBox(width: 6),
+                      Text('AI でくっきり仕上げ中…',
+                          style: TextStyle(color: Colors.white, fontSize: 13)),
+                    ],
                   ),
                 ),
               ),

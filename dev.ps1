@@ -181,7 +181,7 @@ function Get-VenvPython {
     # 壊れた system Python (miniconda 等) を拾わないよう uv 管理の Python を使う
     & uv venv (Join-Path $Root 'tools/.venv') --python-preference only-managed --python 3.12
     & uv pip install --python $py torch torchvision --index-url https://download.pytorch.org/whl/cpu
-    & uv pip install --python $py numpy pillow onnx onnxruntime opencv-python-headless
+    & uv pip install --python $py numpy pillow onnx onnxruntime opencv-python-headless onnxconverter-common
     if (-not (Test-Path $py)) { throw 'tools/.venv の作成に失敗しました。' }
     return $py
 }

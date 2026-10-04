@@ -23,6 +23,17 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  static const String _aiSharpenKey = 'ai_sharpen';
+
+  /// 撮影した紙面を AI でシャープ化してから保存するか (設定画面、端末に保存)。
+  bool get aiSharpen =>
+      DbService.settings.get(_aiSharpenKey, defaultValue: false) as bool;
+
+  Future<void> setAiSharpen(bool value) async {
+    await DbService.settings.put(_aiSharpenKey, value);
+    notifyListeners();
+  }
+
   List<MusicDocument> _documents = <MusicDocument>[];
 
   /// 更新日の新しい順。
@@ -132,6 +143,7 @@ class AppState extends ChangeNotifier {
       rotationDeg: crop.rotation,
       pageId: pageId,
       reduceColors: reduceColors,
+      aiSharpen: aiSharpen,
     );
     final now = DateTime.now().millisecondsSinceEpoch;
     final page = MusicPage(

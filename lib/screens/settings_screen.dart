@@ -281,6 +281,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onTap: _restoreBackup,
             ),
             const Divider(),
+            _sectionHeader(theme, '画質'),
+            SwitchListTile(
+              secondary: const Icon(Icons.auto_awesome_outlined),
+              title: const Text('AI でくっきり'),
+              subtitle: const Text('撮影した紙面のぼけ・ノイズを AI で取り、文字や音符を'
+                  'シャープにして保存します。端末内で処理し、1 ページに 10 秒ほどかかります'),
+              value: context.watch<AppState>().aiSharpen,
+              onChanged: (v) => context.read<AppState>().setAiSharpen(v),
+            ),
+            const Divider(),
             ListTile(
               leading: const Icon(Icons.description_outlined),
               title: const Text('オープンソースライセンス'),
