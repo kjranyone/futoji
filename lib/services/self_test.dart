@@ -6,6 +6,7 @@ import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:image/image.dart' as img;
 
 import 'ai_sharpen.dart';
 import 'db_service.dart';
@@ -121,6 +122,10 @@ class SelfTest {
       Isolate.run(() => AiSharpen.benchmark(model, configs,
           apiBaseAddress: apiBase, tileSize: tileSize));
 
+  /// クロージャがこの関数の変数 (DetectionWorker など送れない物) を拾わないよう分ける。
+  static Future<Uint8List> _grayInIsolate(img.Image im) =>
+      Isolate.run(() => DocumentDetector.toGray(im));
+
   static Future<void> _run(Directory dir) async {
     _log('START ${dir.path}');
     final loadWatch = Stopwatch()..start();
@@ -146,7 +151,7 @@ class SelfTest {
       final decodeWatch = Stopwatch()..start();
       final work = await decodeWorkImage(bytes); // 切り抜き画面と同じ
       final decodeMs = decodeWatch.elapsedMilliseconds;
-      final gray = await Isolate.run(() => DocumentDetector.toGray(work));
+      final gray = await _grayInIsolate(work);
       final w = work.width;
       final h = work.height;
 

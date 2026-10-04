@@ -4,6 +4,7 @@ import 'dart:isolate';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image/image.dart' as img;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
@@ -292,6 +293,12 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
+  /// 輝度化を別 isolate で行う。インスタンスメソッド内のクロージャを Isolate.run に渡すと
+  /// State やカメラまで一緒に送ろうとして「object is unsendable」で必ず失敗し、
+  /// 自動撮影が毎回「紙面を検出できませんでした」になっていた (README の落とし穴メモ)。
+  static Future<Uint8List> _grayInIsolate(img.Image im) =>
+      Isolate.run(() => DocumentDetector.toGray(im));
+
   Future<void> _capture({bool auto = false}) async {
     final controller = _controller;
     if (controller == null ||
@@ -317,7 +324,7 @@ class _CameraScreenState extends State<CameraScreen>
           final bytes = await File(raw.path).readAsBytes();
           // 端末のデコーダで縮小しながら読む (純 Dart の全画素デコードは実機で約 11 秒)
           final im = await decodeImageCapped(bytes, cap: 512);
-          final gray = await Isolate.run(() => DocumentDetector.toGray(im));
+          final gray = await _grayInIsolate(im);
           corners = await PaperNet.detectQuad(gray, im.width, im.height);
         } catch (e) {
           debugPrint('auto capture detect failed: $e');

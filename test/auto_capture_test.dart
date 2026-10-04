@@ -48,12 +48,32 @@ void main() {
       c.feed(q1, t);
       c.feed(q1, t.add(const Duration(milliseconds: 160)));
       expect(c.feed(q1, t.add(const Duration(milliseconds: 320))), isTrue);
-      // 10% 動いた紙
-      final q2 = quadAt(const Offset(0.6, 0.5), 0.3, 0.2);
+      // 20% 動いた紙: 2 回続けて動きを確認して再武装 → 3 回の安定で撮る
+      final q2 = quadAt(const Offset(0.7, 0.5), 0.3, 0.2);
       final t2 = t.add(const Duration(seconds: 5));
       expect(c.feed(q2, t2), isFalse);
       expect(c.feed(q2, t2.add(const Duration(milliseconds: 160))), isFalse);
-      expect(c.feed(q2, t2.add(const Duration(milliseconds: 320))), isTrue);
+      expect(c.feed(q2, t2.add(const Duration(milliseconds: 320))), isFalse);
+      expect(c.feed(q2, t2.add(const Duration(milliseconds: 480))), isTrue);
+    });
+
+    test('検出枠が 2 通りの形を行き来しても、同じ紙を撮り直さない', () {
+      // 実機で観測: 角の 1 つが約 10% 跳ぶ枠と元の枠が交互・連続して出る
+      final c = AutoCaptureController(requiredStableChecks: 3, cooldownMs: 0);
+      final a = quadAt(const Offset(0.5, 0.5), 0.3, 0.2);
+      final b = <Offset>[...a]..[3] = a[3] + const Offset(-0.06, 0.09);
+      expect(maxCornerDelta(a, b), closeTo(0.108, 0.001));
+      final t = DateTime(2026, 1, 1);
+      c.feed(a, t);
+      c.feed(a, t.add(const Duration(milliseconds: 160)));
+      expect(c.feed(a, t.add(const Duration(milliseconds: 320))), isTrue);
+      // その後 10 秒間、a と b が交互に、また b が続けて出ても撮らない
+      var now = t.add(const Duration(seconds: 1));
+      final seq = <List<Offset>>[b, a, b, b, b, b, a, b, a, a, b, b, b, b, b];
+      for (final q in seq) {
+        now = now.add(const Duration(milliseconds: 160));
+        expect(c.feed(q, now), isFalse, reason: '同じ紙を撮り直した');
+      }
     });
 
     test('紙が消えたら参照がリセットされ、同じ位置の紙でも撮る', () {

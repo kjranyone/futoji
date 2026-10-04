@@ -15,7 +15,8 @@ class AutoCaptureController {
     this.stableTolerance = 0.012,
     this.cooldownMs = 3000,
     this.minAreaRatio = 0.18,
-    this.rearmMovement = 0.08,
+    this.rearmMovement = 0.15,
+    this.rearmChecks = 2,
   });
 
   /// 安定判定に必要な連続チェック回数 (検出周期 ~160ms → 約0.5秒)
@@ -32,6 +33,12 @@ class AutoCaptureController {
 
   /// 撮影済みの紙からこの以上動いたら「新しい紙」とみなす移動量
   final double rearmMovement;
+
+  /// [rearmMovement] 以上の移動がこの回数続いたら新しい紙とみなす。
+  /// 検出枠が 2 通りの形を行き来する (実機で角が約 10% 跳ぶ) と、1 回の跳びで
+  /// 「新しい紙」と判定して同じ紙を撮り直していたため、連続で確認する。
+  final int rearmChecks;
+  int _movedCount = 0;
 
   DateTime? _cooldownUntil;
   List<Offset>? _previous;
@@ -58,15 +65,26 @@ class AutoCaptureController {
         ? double.infinity
         : maxCornerDelta(corners, _lastCaptured!);
 
-    if (_lastCaptured != null && movedFromCaptured < rearmMovement) {
-      // さっき撮った紙がまだそこにある → 再撮影しない
-      _stableCount = 0;
-      _previous = corners;
-      return false;
-    }
-    if (!inCooldown && _lastCaptured != null) {
-      // 十分動いた → 新しい紙として再武装
-      _lastCaptured = null;
+    if (_lastCaptured != null) {
+      if (movedFromCaptured < rearmMovement) {
+        // さっき撮った紙がまだそこにある → 再撮影しない
+        _movedCount = 0;
+        _stableCount = 0;
+        _previous = corners;
+        return false;
+      }
+      _movedCount++;
+      if (_movedCount < rearmChecks) {
+        // 動いたのが 1 回だけ (検出枠の揺れかもしれない) → まだ同じ紙として扱う
+        _stableCount = 0;
+        _previous = corners;
+        return false;
+      }
+      if (!inCooldown) {
+        // 十分動いた状態が続いた → 新しい紙として再武装
+        _lastCaptured = null;
+        _movedCount = 0;
+      }
     }
 
     final delta = _previous == null
@@ -105,6 +123,7 @@ class AutoCaptureController {
   }
 
   void reset() {
+    _movedCount = 0;
     _cooldownUntil = null;
     _previous = null;
     _stableCount = 0;
