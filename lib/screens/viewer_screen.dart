@@ -33,6 +33,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
   late final PageController _pageController;
   int _index = 0;
 
+  /// 中央タップで上下のバーを隠す (楽譜を画面いっぱいに見る)。
+  bool _chromeHidden = false;
+
   bool _drawMode = false;
   bool _showStrokes = true;
   bool _eraser = false;
@@ -129,10 +132,33 @@ class _ViewerScreenState extends State<ViewerScreen> {
     setState(() {});
   }
 
+  /// 漫画ビューアのようなタップ操作: 左 1/3 で前、右 1/3 で次のページ、中央でバーの表示切替。
+  void _onTapZone(double fx, int total) {
+    switch (tapZoneOf(fx)) {
+      case TapZone.previous:
+        if (_index <= 0) {
+          showSnackBar(context, '最初のページです');
+          return;
+        }
+        _pageController.previousPage(
+            duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
+      case TapZone.next:
+        if (_index >= total - 1) {
+          showSnackBar(context, '最後のページです');
+          return;
+        }
+        _pageController.nextPage(
+            duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
+      case TapZone.center:
+        setState(() => _chromeHidden = !_chromeHidden);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final pages = app.cachedPages(widget.document.id) ?? const <MusicPage>[];
+    final showChrome = !_chromeHidden || _drawMode;
 
     // 手書き中は端からのスワイプで戻らない (端の近くに書けるように)。
     // 戻る操作 (ボタン・システムの戻る) は「閲覧に戻る」として扱う。
@@ -147,70 +173,72 @@ class _ViewerScreenState extends State<ViewerScreen> {
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        appBar: AppBar(
-          backgroundColor: Colors.black87,
-          foregroundColor: Colors.white,
-          title: Text(
-            pages.isEmpty ? '-' : '${_index + 1} / ${pages.length}',
-            style: const TextStyle(fontSize: 15),
-          ),
-          actions: <Widget>[
-            IconButton(
-              tooltip: _showStrokes ? 'メモを隠す' : 'メモを表示',
-              icon: Icon(_showStrokes ? Icons.visibility : Icons.visibility_off),
-              onPressed: () => setState(() => _showStrokes = !_showStrokes),
-            ),
-            IconButton(
-              icon: const Icon(Icons.add_photo_alternate_outlined),
-              onPressed: _addPages,
-            ),
-            PopupMenuButton<String>(
-              onSelected: (v) async {
-                if (v == 'pdf') {
-                  promptPdfExport(context, document: widget.document);
-                } else if (v == 'note') {
-                  if (pages.isEmpty) return;
-                  final app = context.read<AppState>();
-                  final page = pages[_index.clamp(0, pages.length - 1)];
-                  final note = await showNoteDialog(context, page.note);
-                  if (note != null && mounted) {
-                    await app.setPageNote(page, note);
-                    if (mounted) setState(() {});
-                  }
-                } else if (v == 'delete') {
-                  _deleteCurrent(pages);
-                }
-              },
-              itemBuilder: (_) => <PopupMenuEntry<String>>[
-                PopupMenuItem<String>(
-                  value: 'note',
-                  enabled: pages.isNotEmpty,
-                  child: ListTile(
-                    leading: Icon(Icons.sticky_note_2_outlined),
-                    title: Text('ページメモを編集'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
+        appBar: !showChrome
+            ? null
+            : AppBar(
+                backgroundColor: Colors.black87,
+                foregroundColor: Colors.white,
+                title: Text(
+                  pages.isEmpty ? '-' : '${_index + 1} / ${pages.length}',
+                  style: const TextStyle(fontSize: 15),
                 ),
-                const PopupMenuItem<String>(
-                  value: 'pdf',
-                  child: ListTile(
-                    leading: Icon(Icons.picture_as_pdf),
-                    title: Text('PDF に書き出す'),
-                    contentPadding: EdgeInsets.zero,
+                actions: <Widget>[
+                  IconButton(
+                    tooltip: _showStrokes ? 'メモを隠す' : 'メモを表示',
+                    icon: Icon(_showStrokes ? Icons.visibility : Icons.visibility_off),
+                    onPressed: () => setState(() => _showStrokes = !_showStrokes),
                   ),
-                ),
-                const PopupMenuItem<String>(
-                  value: 'delete',
-                  child: ListTile(
-                    leading: Icon(Icons.delete_outline),
-                    title: Text('このページを削除'),
-                    contentPadding: EdgeInsets.zero,
+                  IconButton(
+                    icon: const Icon(Icons.add_photo_alternate_outlined),
+                    onPressed: _addPages,
                   ),
-                ),
-              ],
-            ),
-          ],
-        ),
+                  PopupMenuButton<String>(
+                    onSelected: (v) async {
+                      if (v == 'pdf') {
+                        promptPdfExport(context, document: widget.document);
+                      } else if (v == 'note') {
+                        if (pages.isEmpty) return;
+                        final app = context.read<AppState>();
+                        final page = pages[_index.clamp(0, pages.length - 1)];
+                        final note = await showNoteDialog(context, page.note);
+                        if (note != null && mounted) {
+                          await app.setPageNote(page, note);
+                          if (mounted) setState(() {});
+                        }
+                      } else if (v == 'delete') {
+                        _deleteCurrent(pages);
+                      }
+                    },
+                    itemBuilder: (_) => <PopupMenuEntry<String>>[
+                      PopupMenuItem<String>(
+                        value: 'note',
+                        enabled: pages.isNotEmpty,
+                        child: ListTile(
+                          leading: Icon(Icons.sticky_note_2_outlined),
+                          title: Text('ページメモを編集'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                      const PopupMenuItem<String>(
+                        value: 'pdf',
+                        child: ListTile(
+                          leading: Icon(Icons.picture_as_pdf),
+                          title: Text('PDF に書き出す'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                      const PopupMenuItem<String>(
+                        value: 'delete',
+                        child: ListTile(
+                          leading: Icon(Icons.delete_outline),
+                          title: Text('このページを削除'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
         body: pages.isEmpty
             ? const Center(
                 child: Text('ページがありません', style: TextStyle(color: Colors.white54)))
@@ -240,10 +268,12 @@ class _ViewerScreenState extends State<ViewerScreen> {
                     onStrokeEnd: (s) => _onStrokeEnd(pages[i], s),
                     onEraseStart: () => _onEraseStart(pages[i]),
                     onEraseEnd: () => _onEraseEnd(pages[i]),
+                    onTapZone: (fx) => _onTapZone(fx, pages.length),
                   ),
                 ),
               ),
-        bottomNavigationBar: pages.isEmpty ? null : _buildToolbar(pages[_index]),
+        bottomNavigationBar:
+            pages.isEmpty || !showChrome ? null : _buildToolbar(pages[_index]),
       ),
     );
   }
@@ -457,7 +487,11 @@ class _PageCanvas extends StatefulWidget {
     required this.onStrokeEnd,
     required this.onEraseStart,
     required this.onEraseEnd,
+    required this.onTapZone,
   });
+
+  /// 閲覧中のタップ位置 (ページ領域の横位置 0..1)。手書き中・拡大中は呼ばない。
+  final ValueChanged<double> onTapZone;
 
   final MusicPage page;
   final bool drawMode;
@@ -609,6 +643,10 @@ class _PageCanvasState extends State<_PageCanvas> {
           final strokesVisible = widget.showStrokes &&
               (widget.drawMode || page.strokes.isNotEmpty);
           return GestureDetector(
+            // 拡大中はタップでページを送らない (パンの操作と紛れるため)
+            onTapUp: !widget.drawMode && !_zoomed
+                ? (d) => widget.onTapZone(d.localPosition.dx / constraints.maxWidth)
+                : null,
             onDoubleTap: !widget.drawMode
                 ? () {
                     // ダブルタップで等倍に戻す
@@ -652,4 +690,14 @@ class _PageCanvasState extends State<_PageCanvas> {
       ),
     );
   }
+}
+
+/// ビューアのタップ領域。
+enum TapZone { previous, center, next }
+
+/// 横位置 (0..1) をタップ領域に分ける。楽譜は左から右へ読むので右が次のページ。
+TapZone tapZoneOf(double fx) {
+  if (fx < 1 / 3) return TapZone.previous;
+  if (fx > 2 / 3) return TapZone.next;
+  return TapZone.center;
 }
