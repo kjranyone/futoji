@@ -5,6 +5,10 @@ BiRefNet は「目立つ物体」を切り抜くモデルなので、マスク�
 縁がギザギザだったりする。紙は四角形なので、最大連結成分に四角形を当てはめ、
 マスクとの一致度 (IoU) が低いものは不採用にする。
 
+手検証ラベルは training_data/paper_photos/quads_manual.json (同じ形式) に置くと
+自動当てはめの結果より優先される (再生成で消えない)。目視検証済み・意図ベース
+(「手前の 1 枚だけ正解」等) の四隅はこちらに記録する。
+
 出力: training_data/paper_photos/quads.json
   { "<stem>": {"quad": [[x,y]*4 (0..1, TL,TR,BR,BL)], "iou": 0.97, "ok": true}, ... }
 QA:   training_data/paper_photos/quad_qa.jpg (緑=採用 / 赤=不採用 の一覧)
@@ -76,6 +80,11 @@ def main():
 
     img_dir = os.path.join(DATA, "images")
     mask_dir = os.path.join(DATA, "masks")
+    manual_path = os.path.join(DATA, "quads_manual.json")
+    manual = {}
+    if os.path.exists(manual_path):
+        with open(manual_path, encoding="utf-8") as fp:
+            manual = json.load(fp)
     out = {}
     tiles = []
     for f in sorted(os.listdir(mask_dir)):
@@ -89,11 +98,21 @@ def main():
         if quad is not None:
             area = cv2.contourArea(quad.astype(np.float32)) / (w * h)
             ok = ok and area >= args.min_area
-        out[stem] = {
-            "quad": None if quad is None else [[float(x / w), float(y / h)] for x, y in quad],
-            "iou": round(iou, 4),
-            "ok": bool(ok),
-        }
+        if stem in manual:
+            entry = manual[stem]
+            mq = np.asarray(entry["quad"], dtype=np.float64)
+            if mq.shape != (4, 2) or not np.all((mq >= 0) & (mq <= 1)):
+                raise SystemExit(f"quads_manual.json の {stem} が 4 点の 0..1 ではない")
+            quad = mq * [w, h]  # QA タイルにも手動四隅を緑で描く
+            ok = True
+            out[stem] = {"quad": entry["quad"], "iou": round(iou, 4), "ok": True,
+                         "manual": True}
+        else:
+            out[stem] = {
+                "quad": None if quad is None else [[float(x / w), float(y / h)] for x, y in quad],
+                "iou": round(iou, 4),
+                "ok": bool(ok),
+            }
         im = cv2.imread(os.path.join(img_dir, stem + ".png"))
         if im is not None:
             t = cv2.resize(im, (160, int(160 * h / w)))
@@ -107,9 +126,13 @@ def main():
     with open(os.path.join(DATA, "quads.json"), "w", encoding="utf-8") as fp:
         json.dump(out, fp, indent=1)
     n_ok = sum(v["ok"] for v in out.values())
-    print(f"quads: {len(out)} fitted, {n_ok} ok (min_iou={args.min_iou})")
+    n_manual = sum(1 for k in out if k in manual)
+    print(f"quads: {len(out)} fitted, {n_ok} ok, {n_manual} manual (min_iou={args.min_iou})")
     bad = sorted((v["iou"], k) for k, v in out.items() if not v["ok"])
     print("rejected:", ", ".join(f"{k}({i:.2f})" for i, k in bad))
+    missing = sorted(set(manual) - set(out))
+    if missing:
+        print("manual にマスクのない stem (無視された):", ", ".join(missing))
 
     cols = 20
     rows = (len(tiles) + cols - 1) // cols

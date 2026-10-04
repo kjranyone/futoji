@@ -13,6 +13,8 @@
   test       flutter test (評価ハーネスは評価データが無ければスキップ)
   eval       紙面検出モデルを評価する (training_data/eval)
   pull       実機に貯めた切り抜き結果を training_data/eval に取り込む
+  promote    eval の補正済みキャプチャを学習ペア (train_real) に昇格する
+  check      training_data の整合性チェック (ペア・座標・学習/評価の漏れ)
   selftest   実機で紙面検出の自己診断 (画像を送り、推論時間と精度を回収する)
   train      紙面検出モデル (v2) を学習する (tools/.venv を自動作成)
   doctor     flutter / adb / 学習環境 / ORT の状態を確認する
@@ -29,7 +31,7 @@
 param(
     [Parameter(Position = 0)]
     [ValidateSet('run', 'install', 'logs', 'devices', 'analyze', 'test', 'eval', 'pull',
-                 'train', 'doctor', 'clean', 'selftest', 'help')]
+                 'promote', 'check', 'train', 'doctor', 'clean', 'selftest', 'help')]
     [string]$Command = 'help',
 
     # run / install のビルドモード
@@ -48,6 +50,10 @@ param(
     # eval: 評価データ (<id>.jpg + <id>.json)。training_data/eval_heldout は学習に未使用の実写
     [string]$Data = 'training_data/eval',
 
+    # promote: 昇格先・オプション (check はオプションなし)
+    [switch]$IncludeUnedited,
+    [switch]$Keep,
+
     # train: 学習ステップ数
     [int]$Steps = 2500,
 
@@ -61,6 +67,7 @@ $Root = $PSScriptRoot
 $AppId = 'com.kjranyone.mymusicbook'
 $CaptureDir = "/sdcard/Android/data/$AppId/files/training_captures"
 $SelfTestDir = "/sdcard/Android/data/$AppId/files/selftest"
+$env:PYTHONIOENCODING = 'utf-8'   # python ツールの出力を UTF-8 に揃える
 Set-Location $Root
 
 # ------------------------------------------------------------------ ツール探索
@@ -253,6 +260,23 @@ switch ($Command) {
         }
         Write-Host "レポート: $outDir/report.md" -ForegroundColor Green
     }
+    'promote' {
+        $py = Get-VenvPython
+        $extra = @()
+        if ($IncludeUnedited) { $extra += '--include-unedited' }
+        if ($Keep) { $extra += '--keep' }
+        & $py tools/promote_captures.py @extra @Rest
+        if ($LASTEXITCODE -ne 0) { throw 'promote_captures.py が失敗しました。' }
+        Write-Host @"
+次: ./dev.ps1 train で学習 (train_real を自動混合) → eval → selftest
+    データセットの説明: docs/DATASET.md
+"@ -ForegroundColor Green
+    }
+    'check' {
+        $py = Get-VenvPython
+        & $py tools/check_dataset.py @Rest
+        if ($LASTEXITCODE -ne 0) { throw 'チェックでエラーがありました (上を確認)。' }
+    }
     'selftest' {
         # 端末にインストール済みのアプリで実行する (先に run / install しておく)
         $id = Get-AndroidDevice
@@ -317,10 +341,14 @@ switch ($Command) {
         if ($i -ge 0 -and $i + 1 -lt $Rest.Count) { $trained = $Rest[$i + 1] }
         Write-Host @"
 学習済み: $trained
-  評価 (学習に未使用の実写。採用前に必ず現行モデルと比べる):
+  評価 (採用前に必ず現行モデルと比べる):
     ./dev.ps1 eval -Model $trained -Data training_data/eval_heldout
     ./dev.ps1 eval -Model $trained -Data training_data/eval_heldout_rot90
+    ./dev.ps1 eval -Model $trained -Data training_data/eval_hard      # 楽譜の難例
+    ./dev.ps1 eval -Model $trained -Data training_data/eval_web       # Web 収集の OOD キャナリー
+    ./dev.ps1 check                                                  # データセット整合性
   採用: Copy-Item $trained assets/models/paper_seg.onnx  → ./dev.ps1 install → ./dev.ps1 selftest
+  改善サイクルの全体像: docs/DATASET.md
 "@ -ForegroundColor Green
     }
     'doctor' {

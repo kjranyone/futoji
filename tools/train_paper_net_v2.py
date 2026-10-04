@@ -8,12 +8,15 @@ v1 (train_paper_net.py) からの変更点:
   ランダムな大きさ・位置・回転・射影で貼り付けて学習データを作る
 - アプリの前処理 (4:3 / 16:9 のフレームを 256x256 へ縦横比無視で縮小、
   センサー向きのままの 90 度回転) を再現する
+- diverse (既定) は柄付き背景・手続き紙面・小物遮蔽・撮影劣化を追加。
+  --synth-profile legacy で従来条件。比較用の固定検証セットは従来条件を維持する
 - エンコーダは ImageNet 事前学習済み MobileNetV3-Small (BSD-3)。
   入出力はアプリと同じ 1x1x256x256 (グレー 0..1 → ロジット) のまま
 
 使い方:
   tools/.venv/Scripts/python tools/train_paper_net_v2.py --steps 4000
   tools/.venv/Scripts/python tools/train_paper_net_v2.py --preview 24   # 合成サンプルの確認だけ
+  tools/.venv/Scripts/python tools/train_paper_net_v2.py --export-synth 256 --synth-out training_data/synthetic_diverse
 """
 
 import argparse
@@ -29,10 +32,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 
+from synthetic_variations import (PROFILE_DEFAULTS, camera_effects, object_occluder,
+                                  procedural_background, procedural_paper)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 PAPER_DIR = os.path.join(ROOT, "training_data", "paper_photos")
 REAL_DIR = os.path.join(ROOT, "training_data", "real_captures")
+REAL_PAIRS_DIR = os.path.join(ROOT, "training_data", "train_real")
 IMG = 256
 CANVAS_LONG = 384
 SRC_LONG = 1024  # 素材画像を読み込むときの長辺 (メモリと速度のため縮小)
@@ -135,6 +142,8 @@ def procedural_bg(rng, W, H):
 
 def crop_bg(rng, bgs, W, H, tries=25):
     """避ける領域をほぼ含まない背景切り抜き (float 0..1, BGR)。見つからなければ None。"""
+    if not bgs:
+        return None
     for _ in range(tries):
         _, im, avoid = bgs[int(rng.integers(len(bgs)))]
         h, w = im.shape[:2]
@@ -269,17 +278,25 @@ def squash(rng, gray, mask):
     return g, (m > 0.5).astype(np.float32)
 
 
-def _pick(rng, papers):
+def _pick(rng, papers, p_procedural=0.0):
+    if p_procedural > 0 and rng.random() < p_procedural:
+        return procedural_paper(rng)
     return papers[int(rng.integers(len(papers)))]
 
 
-def paste_scene(rng, canvas, papers, p_multi, p_occluder, p_panel=0.0):
+def paste_scene(rng, canvas, papers, p_multi, p_occluder, p_panel=0.0,
+                p_procedural=0.0, synth_profile="legacy", p_clipped=0.0, p_stack=0.0):
     """紙を貼る。正解マスクは「主な 1 枚」の四角形全体だけ。
 
     - 単独 (既定): 1 枚だけ貼る
     - 複数枚 (p_multi): 奥の紙を 1〜2 枚貼ってから、主な紙を一番手前に貼る。
       奥の紙は主な紙と同程度以下の大きさで、主な紙の近くに重なるように置く
       (実写の「楽譜が何枚も重なった机」。v2 は複数枚を 1 つに塗ってしまう)
+    - 束 (p_stack): 主な紙の下に 1〜3 枚をわずかにずらして重ね、手前の 1 枚だけ
+      正解にする (実写の「書類の束の上の 1 枚」。下の紙ははみ出して見える)
+    - フレームで切れる (p_clipped): 主な紙を大きく貼り、意図的にキャンバス外へ
+      出す。正解はキャンバス内の可視部分のみ (Web の野良写真で紙がフレーム端で
+      切れているケースへの汎化)
     - 遮蔽物 (p_occluder): 主な紙の上に小さな紙 (付箋・カード相当) を載せる。
       正解は隠れた部分も含めた主な紙の四角形全体 (四隅を求めたいので)
     """
@@ -293,28 +310,83 @@ def paste_scene(rng, canvas, papers, p_multi, p_occluder, p_panel=0.0):
             ang = rng.uniform(0, 2 * np.pi)
             dist = rng.uniform(0.2, 0.75) * side
             bc = (cx + math.cos(ang) * dist, cy + math.sin(ang) * dist)
-            canvas, _, _ = paste_paper(rng, canvas, _pick(rng, papers), True,
+            canvas, _, _ = paste_paper(rng, canvas, _pick(rng, papers, p_procedural), True,
                                        area=main_area * rng.uniform(0.6, 1.05), center=bc)
-        return paste_paper(rng, canvas, _pick(rng, papers), False,
+        return paste_paper(rng, canvas, _pick(rng, papers, p_procedural), False,
                            area=main_area, center=(cx, cy), p_panel=p_panel)
-    canvas, mask, dst = paste_paper(rng, canvas, _pick(rng, papers), rng.random() < 0.15,
+    if u < p_multi + p_stack:
+        # 下の紙は手前の紙と同サイズ ±15% で、小さな回転・平行移動の差だけつける
+        main_area = rng.uniform(0.15, 0.5)
+        cx, cy = rng.uniform(0.35, 0.65) * W, rng.uniform(0.35, 0.65) * H
+        side = math.sqrt(main_area * W * H)
+        for _ in range(int(rng.integers(1, 4))):
+            ang = rng.uniform(0, 2 * np.pi)
+            dist = rng.uniform(0.05, 0.35) * side
+            bc = (cx + math.cos(ang) * dist, cy + math.sin(ang) * dist)
+            canvas, _, _ = paste_paper(rng, canvas, _pick(rng, papers, p_procedural), True,
+                                       area=main_area * rng.uniform(0.85, 1.15), center=bc)
+        return paste_paper(rng, canvas, _pick(rng, papers, p_procedural), False,
+                           area=main_area, center=(cx, cy), p_panel=p_panel)
+    if u < p_multi + p_stack + p_clipped:
+        # 大きめの紙を意図的にキャンバス外へ出す。正解マスクは paste_paper の
+        # alpha (= キャンバス内の可視部分)。可視面積が 92% 超 (紙が全面を覆う)
+        # や 15% 未満 (見えすぎ/見えなさすぎ) は貼り直す。アプリの推論も
+        # マスク面積がほぼ全面 (97%+) は「判定不能」で拒否するため。
+        best = None
+        for _ in range(4):
+            edge = int(rng.integers(4))
+            if edge < 2:
+                cx = (0.02 if edge == 0 else 0.98) * W
+                cy = rng.uniform(0.3, 0.7) * H
+            else:
+                cx = rng.uniform(0.3, 0.7) * W
+                cy = (0.02 if edge == 2 else 0.98) * H
+            out = paste_paper(rng, canvas, _pick(rng, papers, p_procedural), True,
+                              area=rng.uniform(0.4, 1.2), center=(cx, cy), p_panel=p_panel)
+            vis = out[1].sum() / (W * H)
+            if 0.15 <= vis <= 0.92:
+                return out
+            if best is None or abs(vis - 0.5) < abs(best[0] - 0.5):
+                best = (vis, out)
+        return best[1]
+    canvas, mask, dst = paste_paper(rng, canvas, _pick(rng, papers, p_procedural), rng.random() < 0.15,
                                     p_panel=p_panel)
-    if u < p_multi + p_occluder:
+    if u < p_multi + p_stack + p_clipped + p_occluder:
+        if synth_profile == "diverse" and rng.random() < 0.5:
+            return object_occluder(rng, canvas, dst), mask, dst
         main_area = float(mask.sum()) / (W * H)
         # 主な紙の内側 (辺寄り) を中心に小さな紙を載せる
         t = rng.uniform(0.1, 0.9, 2)
         a = dst[0] + (dst[1] - dst[0]) * t[0]
         b = dst[3] + (dst[2] - dst[3]) * t[0]
         oc = a + (b - a) * (t[1] if rng.random() < 0.5 else rng.choice([0.05, 0.95]))
-        canvas, _, _ = paste_paper(rng, canvas, _pick(rng, papers), True,
+        canvas, _, _ = paste_paper(rng, canvas, _pick(rng, papers, p_procedural), True,
                                    area=max(0.01, main_area * rng.uniform(0.05, 0.3)),
                                    center=(float(oc[0]), float(oc[1])))
     return canvas, mask, dst
 
 
-def make_composite(rng, papers, bgs, want_canvas=False, p_multi=0.0, p_occluder=0.0,
-                   p_panel=0.0):
+def synthesis_options(synth_profile="legacy", **overrides):
+    """学習・プレビュー・保存で同じ確率設定を使用する。"""
+    options = dict(PROFILE_DEFAULTS[synth_profile])
+    options.update({k: v for k, v in overrides.items() if v is not None})
+    for name, value in options.items():
+        if not 0 <= value <= 1:
+            raise ValueError(f"{name} must be between 0 and 1")
+    if options["p_multi"] + options["p_stack"] + options["p_clipped"] + options["p_occluder"] > 1:
+        raise ValueError("p_multi + p_stack + p_clipped + p_occluder must be <= 1")
+    if options["p_negative"] > 0.85:
+        raise ValueError("p_negative must be <= 0.85 (15% original scenes)")
+    return dict(synth_profile=synth_profile, **options)
+
+
+def make_composite(rng, papers, bgs, want_canvas=False, p_multi=None, p_occluder=None,
+                   p_panel=None, p_procedural=None, p_negative=None, synth_profile="legacy",
+                   p_clipped=None, p_stack=None):
     """1 サンプル。want_canvas=True なら評価書き出し用に canvas と四隅も返す。"""
+    opts = synthesis_options(synth_profile, p_multi=p_multi, p_occluder=p_occluder,
+                             p_panel=p_panel, p_procedural=p_procedural,
+                             p_negative=p_negative, p_clipped=p_clipped, p_stack=p_stack)
     W, H = rand_canvas(rng)
     r = rng.random()
     dst = None
@@ -333,15 +405,22 @@ def make_composite(rng, papers, bgs, want_canvas=False, p_multi=0.0, p_occluder=
         cv2.fillPoly(mask, [dst.round().astype(np.int32)], 1.0)
     else:
         canvas = None
-        if rng.random() < 0.75:
+        if rng.random() < (0.60 if synth_profile == "diverse" else 0.75):
             canvas = crop_bg(rng, bgs, W, H)
         if canvas is None:
-            canvas = procedural_bg(rng, W, H)
-        if r < 0.20:
+            canvas = (procedural_background(rng, W, H) if synth_profile == "diverse"
+                      else procedural_bg(rng, W, H))
+        if r < 0.15 + opts["p_negative"]:
             mask = np.zeros((H, W), np.float32)  # 紙なし (ネガティブ)
         else:
-            canvas, mask, dst = paste_scene(rng, canvas, papers, p_multi, p_occluder, p_panel)
+            canvas, mask, dst = paste_scene(rng, canvas, papers, opts["p_multi"],
+                                            opts["p_occluder"], opts["p_panel"],
+                                            opts["p_procedural"], synth_profile,
+                                            p_clipped=opts["p_clipped"],
+                                            p_stack=opts["p_stack"])
     canvas = photometric(rng, canvas)
+    if synth_profile == "diverse":
+        canvas = camera_effects(rng, canvas)
     k = int(rng.integers(4))  # センサー向き (縦持ち/横持ち) の 90 度回転
     if k:
         canvas = np.rot90(canvas, k).copy()
@@ -350,7 +429,7 @@ def make_composite(rng, papers, bgs, want_canvas=False, p_multi=0.0, p_occluder=
             # 反時計回り 90 度 x k: (x, y) -> (y, W-1-x) を k 回
             for _ in range(k):
                 w_now = W
-                dst = np.stack([dst[:, 1], w_now - dst[:, 0]], 1)
+                dst = np.stack([dst[:, 1], w_now - 1 - dst[:, 0]], 1)
                 W, H = H, W
     gray = to_gray(canvas)
     g, m = squash(rng, gray, mask)
@@ -366,12 +445,10 @@ def make_composite(rng, papers, bgs, want_canvas=False, p_multi=0.0, p_occluder=
 
 
 class CompositeStream(IterableDataset):
-    def __init__(self, seed, split="train", p_multi=0.0, p_occluder=0.0, p_panel=0.0):
+    def __init__(self, seed, split="train", **options):
         self.seed = seed
         self.split = split
-        self.p_multi = p_multi
-        self.p_occluder = p_occluder
-        self.p_panel = p_panel
+        self.options = synthesis_options(**options)
 
     def __iter__(self):
         info = get_worker_info()
@@ -381,8 +458,7 @@ class CompositeStream(IterableDataset):
         papers, bgs = load_assets()
         pool = papers[self.split]
         while True:
-            g, m = make_composite(rng, pool, bgs, p_multi=self.p_multi,
-                                  p_occluder=self.p_occluder, p_panel=self.p_panel)
+            g, m = make_composite(rng, pool, bgs, **self.options)
             yield torch.from_numpy(g[None]), torch.from_numpy(m[None])
 
 
@@ -459,6 +535,80 @@ def iou_score(logits, y):
     return (inter / union).item() if union > 0 else 1.0
 
 
+def load_real_pairs(pair_dir=REAL_PAIRS_DIR, size=IMG):
+    """training_data/train_real (images/ + masks/) の実写ペア。
+
+    promote_captures.py がアプリの補正済み四隅から作ったもの。ネガティブ
+    (空マスク) も含む。フォルダが無い/空なら (None, None, None)。
+    manifest.json の source に応じたサンプリング重みも返す (難例を厚く)。
+    """
+    img_dir = os.path.join(pair_dir, "images")
+    mask_dir = os.path.join(pair_dir, "masks")
+    if not os.path.isdir(mask_dir):
+        return None, None, None
+    manifest = {}
+    mp = os.path.join(pair_dir, "manifest.json")
+    if os.path.exists(mp):
+        with open(mp, encoding="utf-8") as fp:
+            manifest = json.load(fp)
+    weight_by_source = {
+        "hard_negative_mined": 8.0,       # モデルが実際にミスした難例
+        "stripe_negative_synthesis": 4.0,  # ストライプ系の既知の失敗モード
+    }
+    xs, ys, ids, ws = [], [], [], []
+    for f in sorted(os.listdir(mask_dir)):
+        if not f.endswith("_mask.png"):
+            continue
+        stem = f[: -len("_mask.png")]
+        jpg = os.path.join(img_dir, stem + ".jpg")
+        if not os.path.exists(jpg):
+            continue
+        im = cv2.imread(jpg, cv2.IMREAD_GRAYSCALE)
+        mk = cv2.imread(os.path.join(mask_dir, f), cv2.IMREAD_GRAYSCALE)
+        if im is None or mk is None or im.shape[:2] != mk.shape[:2]:
+            print(f"warn: real pair {stem} を読み飛ばし (画像/マスク不正)")
+            continue
+        im = cv2.resize(im, (size, size), interpolation=cv2.INTER_AREA)
+        mk = cv2.resize(mk, (size, size), interpolation=cv2.INTER_NEAREST)
+        xs.append(im.astype(np.float32) / 255.0)
+        ys.append((mk > 127).astype(np.float32))
+        ids.append(stem)
+        ws.append(weight_by_source.get(manifest.get(stem, {}).get("source", ""), 1.0))
+    if not xs:
+        return None, None, None
+    w = np.asarray(ws, dtype=np.float64)
+    return np.stack(xs)[..., None], np.stack(ys)[..., None], ids, w / w.sum()
+
+
+def augment_real_pair(x, y, rng):
+    """実写ペアへの軽いオーギュメンテーション (反転・90 度回転・輝度)。"""
+    if rng.random() < 0.5:
+        x, y = x[:, ::-1], y[:, ::-1]
+    if rng.random() < 0.5:
+        x, y = x[::-1, :], y[::-1, :]
+    k = int(rng.integers(0, 4))
+    if k:
+        x, y = np.rot90(x, k), np.rot90(y, k)
+    b = rng.uniform(0.85, 1.15)
+    c = rng.uniform(0.9, 1.1)
+    x = np.clip((x - 0.5) * c + 0.5 + (b - 1.0) * 0.3, 0.0, 1.0)
+    return np.ascontiguousarray(x), np.ascontiguousarray(y)
+
+
+def mix_real_pairs(x, y, rx, ry, rng, ratio, p=None):
+    """バッチの一部を実写ペアで置き換える。p があれば重み付きサンプリング。"""
+    n = min(len(rx), int(round(x.shape[0] * ratio)))
+    if n <= 0:
+        return x, y
+    slots = rng.choice(x.shape[0], n, replace=False)
+    picks = rng.choice(len(rx), n, replace=True, p=p)
+    for j, i in zip(slots, picks):
+        ax, ay = augment_real_pair(rx[i], ry[i], rng)
+        x[j] = torch.from_numpy(ax.transpose(2, 0, 1).copy())
+        y[j] = torch.from_numpy(ay.transpose(2, 0, 1).copy())
+    return x, y
+
+
 def fixed_val_set(n, seed=123):
     rng = np.random.default_rng(seed)
     papers, bgs = load_assets()
@@ -481,13 +631,12 @@ def onnx_iou(path, vx, vy):
     return float(np.mean(ious))
 
 
-def preview(n, out_path, p_multi=0.0, p_occluder=0.0, p_panel=0.0):
-    rng = np.random.default_rng(1)
+def preview(n, out_path, seed=1, **options):
+    rng = np.random.default_rng(seed)
     papers, bgs = load_assets()
     tiles = []
     for _ in range(n):
-        g, m = make_composite(rng, papers["train"], bgs, p_multi=p_multi, p_occluder=p_occluder,
-                              p_panel=p_panel)
+        g, m = make_composite(rng, papers["train"], bgs, **options)
         t = cv2.cvtColor((g * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
         cnts, _ = cv2.findContours((m > 0.5).astype(np.uint8), cv2.RETR_EXTERNAL,
                                    cv2.CHAIN_APPROX_SIMPLE)
@@ -499,8 +648,45 @@ def preview(n, out_path, p_multi=0.0, p_occluder=0.0, p_panel=0.0):
     for i, t in enumerate(tiles):
         r, c = divmod(i, cols)
         sheet[r * IMG:(r + 1) * IMG, c * IMG:(c + 1) * IMG] = t
-    cv2.imwrite(out_path, sheet)
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    if not cv2.imwrite(out_path, sheet):
+        raise OSError(f"cannot write preview: {out_path}")
     print("preview:", out_path)
+
+
+def export_synthetic(n, out_dir, seed=1, **options):
+    """アプリ入力と同じ 256x256 画像・正解マスクを保存。既存の保存先は上書きしない。"""
+    options = synthesis_options(**options)
+    papers, bgs = load_assets()
+    os.makedirs(out_dir, exist_ok=False)
+    os.makedirs(os.path.join(out_dir, "images"))
+    os.makedirs(os.path.join(out_dir, "masks"))
+    rng = np.random.default_rng(seed)
+    positives = 0
+    with open(os.path.join(out_dir, "manifest.jsonl"), "w", encoding="utf-8") as fp:
+        for i in range(n):
+            g, m, canvas, quad = make_composite(rng, papers["train"], bgs,
+                                               want_canvas=True, **options)
+            stem = f"{i + 1:06d}"
+            image_path = f"images/{stem}.png"
+            mask_path = f"masks/{stem}_mask.png"
+            for path, img in ((image_path, (g * 255).round().astype(np.uint8)),
+                              (mask_path, (m * 255).astype(np.uint8))):
+                if not cv2.imwrite(os.path.join(out_dir, path), img):
+                    raise OSError(f"cannot write: {path}")
+            positives += int(m.any())
+            height, width = canvas.shape[:2]
+            record = dict(id=stem, image=image_path, mask=mask_path, width=IMG, height=IMG,
+                          paper_present=bool(m.any()), split="train",
+                          corners=(quad / [width, height]).tolist() if quad is not None else None)
+            fp.write(json.dumps(record, ensure_ascii=False) + "\n")
+    with open(os.path.join(out_dir, "config.json"), "w", encoding="utf-8") as fp:
+        json.dump(dict(seed=seed, count=n, positive=positives, negative=n - positives,
+                       options=options, label_policy="full_main_page_including_occlusion",
+                       source_papers=[p[0] for p in papers["train"]],
+                       source_backgrounds=sorted({b[0] for b in bgs})),
+                  fp, ensure_ascii=False, indent=2)
+    print(f"synthetic: {out_dir} ({n} pairs; paper {positives}, negative {n - positives})")
 
 
 def main():
@@ -513,19 +699,51 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "paper_seg_v2.onnx"))
     ap.add_argument("--baseline", default=os.path.join(ROOT, "assets", "models", "paper_seg.onnx"))
     ap.add_argument("--preview", type=int, default=0)
-    ap.add_argument("--p-multi", type=float, default=0.0,
+    ap.add_argument("--seed", type=int, default=1, help="プレビュー・保存用の生成シード")
+    ap.add_argument("--preview-out", default=os.path.join(ROOT, "build", "v2_preview.jpg"))
+    ap.add_argument("--export-synth", type=int, default=0, help="合成画像とマスクを指定枚数保存 (学習はしない)")
+    ap.add_argument("--synth-out", default=os.path.join(ROOT, "training_data", "synthetic_diverse"))
+    ap.add_argument("--synth-profile", choices=tuple(PROFILE_DEFAULTS), default="diverse",
+                    help="diverse: 多様な素材・撮影条件 (既定), legacy: 従来条件")
+    ap.add_argument("--p-procedural", type=float, default=None,
+                    help="貼り付ける紙を手続き生成素材に置換する確率 (diverse: 0.30)")
+    ap.add_argument("--p-negative", type=float, default=None,
+                    help="紙なし画像の割合 (diverse: 0.12, legacy: 0.05)")
+    ap.add_argument("--p-multi", type=float, default=None,
                     help="複数枚の紙 (主な 1 枚だけが正解) の割合")
-    ap.add_argument("--p-occluder", type=float, default=0.0,
-                    help="主な紙の上に小さな紙を載せる割合 (正解は主な紙の四角形全体)")
-    ap.add_argument("--p-panel", type=float, default=0.0,
+    ap.add_argument("--p-occluder", type=float, default=None,
+                    help="主な紙に小さな紙や小物を載せる割合 (正解は主な紙の四角形全体)")
+    ap.add_argument("--p-panel", type=float, default=None,
                     help="紙の内側に色ブロックを描く割合 (正解は紙全体)")
+    ap.add_argument("--p-clipped", type=float, default=None,
+                    help="主な紙をフレーム外へ出す割合 (正解はキャンバス内の可視部分)")
+    ap.add_argument("--p-stack", type=float, default=None,
+                    help="主な紙の下にずらした紙を重ねる割合 (正解は手前の 1 枚)")
     ap.add_argument("--init-pth", default="", help="この重みから学習を始める (例: build/paper_seg_v2.pth)")
+    ap.add_argument("--real-pairs-dir", default=REAL_PAIRS_DIR,
+                    help="promote_captures.py が作った実写ペア (images/ + masks/)。あれば混合する")
+    ap.add_argument("--real-ratio", type=float, default=0.2,
+                    help="バッチ中の実写ペアの割合 (0 で無効)")
     args = ap.parse_args()
+    try:
+        options = synthesis_options(args.synth_profile, p_multi=args.p_multi,
+                                    p_occluder=args.p_occluder, p_panel=args.p_panel,
+                                    p_procedural=args.p_procedural, p_negative=args.p_negative,
+                                    p_clipped=args.p_clipped, p_stack=args.p_stack)
+    except ValueError as exc:
+        ap.error(str(exc))
+    if args.preview < 0 or args.export_synth < 0:
+        ap.error("--preview and --export-synth must be >= 0")
+    if args.preview and args.export_synth:
+        ap.error("choose either --preview or --export-synth")
+    cv2.setNumThreads(1)
+    print("synthesis:", json.dumps(options, ensure_ascii=False))
 
     if args.preview:
-        os.makedirs(os.path.join(ROOT, "build"), exist_ok=True)
-        preview(args.preview, os.path.join(ROOT, "build", "v2_preview.jpg"),
-                p_multi=args.p_multi, p_occluder=args.p_occluder, p_panel=args.p_panel)
+        preview(args.preview, args.preview_out, seed=args.seed, **options)
+        return
+    if args.export_synth:
+        export_synthetic(args.export_synth, args.synth_out, seed=args.seed, **options)
         return
 
     torch.manual_seed(0)
@@ -541,10 +759,17 @@ def main():
     if os.path.exists(args.baseline):
         print(f"baseline {os.path.basename(args.baseline)} val IoU: {onnx_iou(args.baseline, vx, vy):.4f}")
 
-    loader = DataLoader(CompositeStream(seed=42, p_multi=args.p_multi,
-                                        p_occluder=args.p_occluder, p_panel=args.p_panel),
+    loader = DataLoader(CompositeStream(seed=42, **options),
                         batch_size=args.batch,
                         num_workers=args.workers, persistent_workers=args.workers > 0)
+    rx, ry, real_ids, real_p = load_real_pairs(args.real_pairs_dir)
+    real_rng = np.random.default_rng(7)
+    if rx is not None and args.real_ratio > 0:
+        n_neg = int(sum(ry[i].sum() == 0 for i in range(len(ry))))
+        print(f"real pairs: {len(rx)} (紙なし {n_neg}) をバッチの {args.real_ratio:.0%} に混合"
+              f" (難例重み付き)")
+    else:
+        print("real pairs: なし (合成のみで学習)")
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     warm = 200
     sched = torch.optim.lr_scheduler.LambdaLR(
@@ -560,6 +785,8 @@ def main():
     for step in range(1, args.steps + 1):
         model.train()
         x, y = next(it)
+        if rx is not None and args.real_ratio > 0:
+            x, y = mix_real_pairs(x, y, rx, ry, real_rng, args.real_ratio, p=real_p)
         logits = model(x)
         loss = bce(logits, y) + dice_loss(logits, y)
         opt.zero_grad()
