@@ -255,6 +255,18 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
+  Future<void> _toggleAiSharpen() async {
+    final app = context.read<AppState>();
+    await app.setAiSharpen(!app.aiSharpen);
+    if (!mounted) return;
+    showSnackBar(
+      context,
+      app.aiSharpen
+          ? 'AI でくっきりオン: 保存のたびに 10 秒ほど仕上げます'
+          : 'AI でくっきりオフ: すぐに保存します',
+    );
+  }
+
   /// ページを保存する。AI 仕上げが ON のときは、その間カメラのプレビューと
   /// フレーム配信を止めて CPU を空ける (止めないと推論が実機で約 2 倍遅くなった)。
   Future<void> _savePage(AppState app, String rawPath, CropResult crop) async {
@@ -408,6 +420,7 @@ class _CameraScreenState extends State<CameraScreen>
     // 教材の既存ページに続く番号 (addScannedPage が保存のたびに pageCount を更新する)
     final pageSoFar = widget.document.pageCount + 1;
     final reduceColors = context.watch<AppState>().reduceColors;
+    final aiSharpen = context.watch<AppState>().aiSharpen;
     return Stack(
       children: <Widget>[
         Center(
@@ -513,6 +526,15 @@ class _CameraScreenState extends State<CameraScreen>
                 ),
               ),
               const SizedBox(width: 4),
+              // AI でくっきり (設定画面の「画質」と同じ設定。撮影しながら切り替えられる)
+              IconButton(
+                tooltip: 'AI でくっきり',
+                icon: Icon(
+                  aiSharpen ? Icons.auto_awesome : Icons.auto_awesome_outlined,
+                  color: aiSharpen ? const Color(0xFFFFC107) : Colors.white70,
+                ),
+                onPressed: _busy ? null : _toggleAiSharpen,
+              ),
               // 減色オプション (色域を認識して自動で色数を減らし軽量化)
               IconButton(
                 tooltip: '減色して軽量化 (自動)',
