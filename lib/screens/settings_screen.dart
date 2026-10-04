@@ -62,11 +62,79 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// 作成前に件数と予想サイズを見せ、空き容量が足りなければ止める。
+  Future<bool> _confirmExport() async {
+    final est = BackupService.estimate();
+    if (est.pageCount == 0) {
+      showSnackBar(context, '書き出す教材がありません');
+      return false;
+    }
+    // zip はいったんアプリの一時領域に作るので、その空き容量を確認する (Android のみ取得)
+    int? free;
+    if (Platform.isAndroid) {
+      try {
+        free = await _saveChannel.invokeMethod<int>('freeBytes');
+      } catch (_) {}
+    }
+    if (!mounted) return false;
+    // 一時領域の zip に加え、端末内に保存するとその分も要るので余裕を見て 2 倍 + 50 MB
+    final need = est.bytes * 2 + 50 * 1024 * 1024;
+    final short = free != null && free < need;
+    final theme = Theme.of(context);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('バックアップを書き出す'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('教材 ${est.documentCount} 件・${est.pageCount} ページ'),
+            const SizedBox(height: 4),
+            Text('予想サイズ: 約 ${formatBytes(est.bytes)}',
+                style: theme.textTheme.titleMedium),
+            if (free != null) ...<Widget>[
+              const SizedBox(height: 4),
+              Text('端末の空き容量: ${formatBytes(free)}',
+                  style: theme.textTheme.bodySmall),
+            ],
+            if (est.missingImages > 0) ...<Widget>[
+              const SizedBox(height: 8),
+              Text('画像が見つからない ${est.missingImages} ページは含まれません',
+                  style: theme.textTheme.bodySmall),
+            ],
+            if (short) ...<Widget>[
+              const SizedBox(height: 8),
+              Text('空き容量が足りません (約 ${formatBytes(need)} 必要)。'
+                  '不要なファイルを削除してから書き出してください',
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.error)),
+            ],
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: short ? null : () => Navigator.of(ctx).pop(true),
+            child: const Text('作成'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   Future<void> _exportBackup() async {
+    if (!await _confirmExport() || !mounted) return;
     try {
       final result = await _withProgress('バックアップを作成中…', BackupService.export);
       if (!mounted) return;
-      final summary = '教材 ${result.documentCount} 件・${result.pageCount} ページ';
+      final size = formatBytes(await result.file.length());
+      if (!mounted) return;
+      final summary = '教材 ${result.documentCount} 件・${result.pageCount} ページ・$size';
       final missing = result.missingImages > 0
           ? ' (画像が見つからない ${result.missingImages} ページは含めていません)'
           : '';

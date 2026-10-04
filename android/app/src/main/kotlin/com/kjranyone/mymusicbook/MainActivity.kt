@@ -17,10 +17,15 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        // バックアップ zip を「保存先を選んで保存」する (SAF)。
+        // バックアップ zip を「保存先を選んで保存」する (SAF) と、作成前の空き容量の取得。
         // 大きなファイルをメモリに載せないよう、ネイティブ側でストリームコピーする。
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mymusicbook/save")
             .setMethodCallHandler { call, result ->
+                if (call.method == "freeBytes") {
+                    // バックアップ zip を作る一時領域 (cacheDir) の空き容量
+                    result.success(cacheDir.usableSpace)
+                    return@setMethodCallHandler
+                }
                 if (call.method != "saveAs") {
                     result.notImplemented()
                     return@setMethodCallHandler

@@ -30,6 +30,33 @@ class BackupService {
   /// zip 内で受け付けるページ画像の名前 (zip slip 対策で id の文字種を限定)。
   static final RegExp _pageFile = RegExp(r'^(images|thumbs)/([A-Za-z0-9_-]+)\.webp$');
 
+  /// 書き出す前の見積もり。画像は無圧縮で格納するので、zip のサイズは
+  /// 画像ファイルの合計 + メタデータ・zip ヘッダ (数 KB) とほぼ同じになる。
+  static BackupEstimate estimate() {
+    var pages = 0;
+    var missing = 0;
+    var bytes = 0;
+    for (final p in DbService.pages.values) {
+      final image = _existing(p.imagePath, AppPaths.imagePathFor(p.id));
+      if (image == null) {
+        missing++;
+        continue;
+      }
+      pages++;
+      bytes += File(image).lengthSync();
+      final thumb = _existing(p.thumbPath, AppPaths.thumbPathFor(p.id));
+      if (thumb != null) bytes += File(thumb).lengthSync();
+      // ページごとのメタデータ (手書きを含む JSON) と zip のエントリヘッダの概算
+      bytes += 512 + p.strokes.fold<int>(0, (n, s) => n + 16 * s.points.length);
+    }
+    return BackupEstimate(
+      documentCount: DbService.documents.length,
+      pageCount: pages,
+      bytes: bytes + 4096,
+      missingImages: missing,
+    );
+  }
+
   /// 全教材を zip に書き出す。[outDir] 省略時は一時ディレクトリ
   /// (前回の書き出しファイルは消す)。
   static Future<BackupExportResult> export({Directory? outDir}) async {
@@ -325,6 +352,32 @@ class BackupService {
   }
 
   static String _two(int v) => v.toString().padLeft(2, '0');
+}
+
+class BackupEstimate {
+  BackupEstimate({
+    required this.documentCount,
+    required this.pageCount,
+    required this.bytes,
+    required this.missingImages,
+  });
+
+  final int documentCount;
+  final int pageCount;
+
+  /// zip の予想サイズ (バイト)。
+  final int bytes;
+  final int missingImages;
+}
+
+/// 人が読むサイズ表記 (例: 980 KB / 12.3 MB / 1.20 GB)。
+String formatBytes(int bytes) {
+  const kb = 1024;
+  const mb = kb * 1024;
+  const gb = mb * 1024;
+  if (bytes >= gb) return '${(bytes / gb).toStringAsFixed(2)} GB';
+  if (bytes >= mb) return '${(bytes / mb).toStringAsFixed(1)} MB';
+  return '${(bytes / kb).ceil()} KB';
 }
 
 class BackupExportResult {

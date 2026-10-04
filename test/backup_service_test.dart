@@ -178,6 +178,25 @@ void main() {
     expect(File(AppPaths.imagePathFor('docCp0')).existsSync(), isTrue);
   });
 
+  test('見積もりサイズは実際の zip とほぼ一致する', () async {
+    // 実際の画像に近い大きさ (本文 300 KB・サムネイル 20 KB) の非圧縮性データで 10 ページ
+    final rnd = List<int>.generate(320 * 1024, (i) => (i * 2654435761) >> 7 & 0xFF);
+    for (int i = 0; i < 10; i++) {
+      final page = await addPage('docA', 'docAp$i', i);
+      File(page.imagePath).writeAsBytesSync(rnd.sublist(0, 300 * 1024));
+      File(page.thumbPath).writeAsBytesSync(rnd.sublist(0, 20 * 1024));
+    }
+    await DbService.documents.put(
+        'docA', MusicDocument(id: 'docA', title: 'A', createdAt: 1, updatedAt: 2, pageCount: 10));
+
+    final est = BackupService.estimate();
+    expect(est.pageCount, 10);
+    final actual = (await BackupService.export(outDir: out)).file.lengthSync();
+    expect((est.bytes - actual).abs() / actual, lessThan(0.02),
+        reason: 'estimate=${est.bytes} actual=$actual');
+    expect(formatBytes(actual), endsWith('MB'));
+  });
+
   test('バックアップ以外の zip は手元のデータを変えずに拒否する', () async {
     await addDoc('docA', 'バイエル', 1);
     final path = '${out.path}/other.zip';
