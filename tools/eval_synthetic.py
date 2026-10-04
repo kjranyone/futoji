@@ -139,6 +139,9 @@ def discover_groups():
     """training_data の synthetic_* ディレクトリから images/masks を持つグループを集める。"""
     groups = []
     for d in sorted(glob.glob(os.path.join(ROOT, "training_data", "synthetic_*"))):
+        # negpool は偶数 id も含めて全件 train_real に取り込み済み (評価に使えない)
+        if os.path.basename(d).startswith("synthetic_negpool"):
+            continue
         if os.path.isdir(os.path.join(d, "images")):
             groups.append((os.path.basename(d), d))
         for sub in sorted(glob.glob(os.path.join(d, "*"))):

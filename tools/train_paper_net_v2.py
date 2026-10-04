@@ -10,6 +10,8 @@ v1 (train_paper_net.py) からの変更点:
   センサー向きのままの 90 度回転) を再現する
 - diverse (既定) は柄付き背景・手続き紙面・小物遮蔽・撮影劣化を追加。
   --synth-profile legacy で従来条件。比較用の固定検証セットは従来条件を維持する
+- --synth-sets で保存済みの合成セット (export_synthetic の出力) をバッチに混合する。
+  数値 id が奇数のペアだけを読み、偶数 (holdout) は eval_synthetic.py の評価専用に残す
 - エンコーダは ImageNet 事前学習済み MobileNetV3-Small (BSD-3)。
   入出力はアプリと同じ 1x1x256x256 (グレー 0..1 → ロジット) のまま
 
@@ -40,6 +42,13 @@ ROOT = os.path.join(HERE, "..")
 PAPER_DIR = os.path.join(ROOT, "training_data", "paper_photos")
 REAL_DIR = os.path.join(ROOT, "training_data", "real_captures")
 REAL_PAIRS_DIR = os.path.join(ROOT, "training_data", "train_real")
+# 保存済み合成セット (docs/datasets/README.md)。奇数 id だけを学習に使う
+SAVED_SYNTH_DIRS = [
+    os.path.join(ROOT, "training_data", "synthetic_diverse_2026-10-02"),
+    *(os.path.join(ROOT, "training_data", "synthetic_expanded_2026-10-02", g)
+      for g in ("ordinary", "printed_layouts", "overlap_occlusion", "clipped_pages",
+                "negative_heavy")),
+]
 IMG = 256
 CANVAS_LONG = 384
 SRC_LONG = 1024  # 素材画像を読み込むときの長辺 (メモリと速度のため縮小)
@@ -595,12 +604,48 @@ def augment_real_pair(x, y, rng):
     return np.ascontiguousarray(x), np.ascontiguousarray(y)
 
 
-def mix_real_pairs(x, y, rx, ry, rng, ratio, p=None):
-    """バッチの一部を実写ペアで置き換える。p があれば重み付きサンプリング。"""
-    n = min(len(rx), int(round(x.shape[0] * ratio)))
+def load_saved_synthetic(dirs, size=IMG):
+    """保存済み合成セットの奇数 id (学習側) を読み込む。偶数 id (holdout) は読まない。
+
+    戻り値: (x [N,H,W,1] float32, y [N,H,W,1] float32, 内訳 dict)。
+    """
+    xs, ys, summary = [], [], {}
+    for d in dirs:
+        with open(os.path.join(d, "manifest.jsonl"), encoding="utf-8") as fp:
+            records = [json.loads(line) for line in fp]
+        used = [r for r in records if int(r["id"]) % 2 == 1]
+        pos = 0
+        for r in used:
+            im = cv2.imread(os.path.join(d, r["image"]), cv2.IMREAD_GRAYSCALE)
+            mk = cv2.imread(os.path.join(d, r["mask"]), cv2.IMREAD_GRAYSCALE)
+            if im is None or mk is None or im.shape != (size, size) or mk.shape != im.shape:
+                raise ValueError(f"invalid saved pair: {d} {r['id']}")
+            if bool(mk.any()) != r["paper_present"]:
+                raise ValueError(f"label mismatch: {d} {r['id']}")
+            xs.append(im.astype(np.float32) / 255.0)
+            ys.append((mk > 127).astype(np.float32))
+            pos += int(r["paper_present"])
+        name = os.path.relpath(d, os.path.join(ROOT, "training_data")).replace(os.sep, "/")
+        summary[name] = dict(used=len(used), positive=pos, negative=len(used) - pos,
+                             holdout_excluded=len(records) - len(used))
+    if not xs:
+        return None, None, summary
+    return np.stack(xs)[..., None], np.stack(ys)[..., None], summary
+
+
+def mix_real_pairs(x, y, rx, ry, rng, ratio, p=None, slots=None):
+    """バッチの一部を実写ペアで置き換える。p があれば重み付きサンプリング。
+
+    slots を渡すとその位置だけを置き換える (保存合成との重複を避けるため)。
+    """
+    if slots is None:
+        n = min(len(rx), int(round(x.shape[0] * ratio)))
+        if n <= 0:
+            return x, y
+        slots = rng.choice(x.shape[0], n, replace=False)
+    n = len(slots)
     if n <= 0:
         return x, y
-    slots = rng.choice(x.shape[0], n, replace=False)
     picks = rng.choice(len(rx), n, replace=True, p=p)
     for j, i in zip(slots, picks):
         ax, ay = augment_real_pair(rx[i], ry[i], rng)
@@ -724,6 +769,10 @@ def main():
                     help="promote_captures.py が作った実写ペア (images/ + masks/)。あれば混合する")
     ap.add_argument("--real-ratio", type=float, default=0.2,
                     help="バッチ中の実写ペアの割合 (0 で無効)")
+    ap.add_argument("--synth-sets", nargs="*", default=SAVED_SYNTH_DIRS,
+                    help="バッチに混ぜる保存済み合成セット (奇数 id のみ使用)")
+    ap.add_argument("--synth-ratio", type=float, default=0.4,
+                    help="バッチ中の保存済み合成セットの割合 (0 で無効、残りはその場生成)")
     args = ap.parse_args()
     try:
         options = synthesis_options(args.synth_profile, p_multi=args.p_multi,
@@ -764,12 +813,30 @@ def main():
                         num_workers=args.workers, persistent_workers=args.workers > 0)
     rx, ry, real_ids, real_p = load_real_pairs(args.real_pairs_dir)
     real_rng = np.random.default_rng(7)
-    if rx is not None and args.real_ratio > 0:
+    use_real = rx is not None and args.real_ratio > 0
+    if use_real:
         n_neg = int(sum(ry[i].sum() == 0 for i in range(len(ry))))
         print(f"real pairs: {len(rx)} (紙なし {n_neg}) をバッチの {args.real_ratio:.0%} に混合"
               f" (難例重み付き)")
     else:
         print("real pairs: なし (合成のみで学習)")
+    sx = sy = None
+    saved_summary = {}
+    if args.synth_ratio > 0:
+        sx, sy, saved_summary = load_saved_synthetic(args.synth_sets)
+        if sx is None:
+            ap.error("--synth-ratio > 0 ですが保存済み合成セットが空です")
+        for name, c in saved_summary.items():
+            print(f"saved synth: {name}: {c['used']} 組 (紙あり {c['positive']} / 紙なし "
+                  f"{c['negative']}, holdout {c['holdout_excluded']} は除外)")
+        print(f"saved synth: 計 {len(sx)} 組をバッチの {args.synth_ratio:.0%} に混合")
+    n_real = int(round(args.batch * args.real_ratio)) if use_real else 0
+    n_saved = int(round(args.batch * args.synth_ratio)) if sx is not None else 0
+    if n_real + n_saved > args.batch:
+        ap.error("--real-ratio と --synth-ratio の合計が 1 を超えています")
+    print(f"batch {args.batch}: その場生成 {args.batch - n_real - n_saved} / 保存合成 {n_saved}"
+          f" / train_real {n_real}")
+    saved_seen = np.zeros(len(sx), dtype=np.int64) if sx is not None else None
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     warm = 200
     sched = torch.optim.lr_scheduler.LambdaLR(
@@ -785,8 +852,15 @@ def main():
     for step in range(1, args.steps + 1):
         model.train()
         x, y = next(it)
-        if rx is not None and args.real_ratio > 0:
-            x, y = mix_real_pairs(x, y, rx, ry, real_rng, args.real_ratio, p=real_p)
+        slots = real_rng.permutation(x.shape[0])
+        if n_real:
+            x, y = mix_real_pairs(x, y, rx, ry, real_rng, args.real_ratio, p=real_p,
+                                  slots=slots[:n_real])
+        if n_saved:
+            picks = real_rng.choice(len(sx), n_saved, replace=False)
+            saved_seen[picks] += 1
+            x, y = mix_real_pairs(x, y, sx[picks], sy[picks], real_rng, 1.0,
+                                  slots=slots[n_real:n_real + n_saved])
         logits = model(x)
         loss = bce(logits, y) + dice_loss(logits, y)
         opt.zero_grad()
@@ -817,6 +891,19 @@ def main():
     # 実写での性能は ./dev.ps1 eval -Data training_data/eval_heldout で測ること。
     tx, ty = fixed_val_set(256, seed=999)
     print(f"exported test IoU: {onnx_iou(args.out, tx, ty):.4f} (未使用シード)")
+    # 学習データの記録 (保存合成が実際に何回使われたかを残す)
+    record = dict(out=os.path.basename(args.out), init=args.init_pth or "imagenet",
+                  steps=args.steps, batch=args.batch, lr=args.lr, synthesis=options,
+                  batch_split=dict(onthefly=args.batch - n_real - n_saved, saved=n_saved,
+                                   train_real=n_real),
+                  train_real=len(rx) if use_real else 0, saved_synth=saved_summary)
+    if saved_seen is not None:
+        record["saved_synth_coverage"] = dict(
+            seen_at_least_once=int((saved_seen > 0).sum()), total=len(saved_seen),
+            mean_views=round(float(saved_seen.mean()), 2))
+        print(f"saved synth coverage: {record['saved_synth_coverage']}")
+    with open(args.out[:-5] + ".data.json", "w", encoding="utf-8") as fp:
+        json.dump(record, fp, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":

@@ -65,9 +65,9 @@ tools/.venv/Scripts/python tools/test_synthetic_variations.py -v
 マスクが正式なラスタライズ済み教師ラベルです。同じコード・素材・環境・シード・設定で
 再生成できます。
 
-保存したバッチは学習側の素材から生成しているため、全件 `split=train` とし、
-独立した検証・評価セットには転用しません。現行の学習処理は保存バッチを読み込まず、
-同じ設定でその場で生成し続けます。`eval_*` と `quarantine_heldout_dup` は生成処理の
+保存したバッチは学習側の素材から生成しているため、全件 `split=train` です。
+学習処理は保存バッチの奇数 id をバッチに混ぜ (`--synth-ratio`、既定 0.4)、偶数 id は
+`eval_synthetic.py --split holdout` の条件別点検に残します (詳細は [README](README.md))。`eval_*` と `quarantine_heldout_dup` は生成処理の
 素材にも使いません。
 
 2026-10-02にシード1で256組（紙あり214・紙なし42）を保存し、64枚の一覧を目視確認

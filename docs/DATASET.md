@@ -16,10 +16,10 @@ training_data/
 │   ├── images/<id>.jpg      promote が eval/ から移動 / ネガティブは tools/add_imagegen_negatives.py
 │   ├── masks/<id>_mask.png  補正四隅をラスタライズ (ネガティブは空マスク)
 │   └── manifest.json        由来・昇格日時
-├── synthetic_diverse_2026-10-02/   学習用の合成画像・マスク256組 (保存・点検用)
-├── synthetic_expanded_2026-10-02/  学習用の追加合成5,000組 (5条件群、保存・点検用)
-│                            ↑ 固定の条件別評価セットとしても使う:
-│                            tools/eval_synthetic.py -M <model.onnx> (条件別 IoU/誤検出)
+├── synthetic_diverse_2026-10-02/   保存合成 256 組   ┐ 奇数 id = 学習 (--synth-ratio で混合)
+├── synthetic_expanded_2026-10-02/  保存合成 5,000 組 ┘ 偶数 id = 評価専用
+│                            tools/eval_synthetic.py -M <model.onnx> --split holdout
+├── synthetic_negpool*_2026-10-02/  紙なし合成プール (中身は train_real に取り込み済み)
 ├── eval/                    評価のステージング: アプリの「検出改善用に保存」→ pull
 │                            (promote で学習に昇格すると消える。評価レポートにも使う)
 ├── eval_heldout/            評価: 学習未使用の実写 (横持ち)      ← 主指標
@@ -42,7 +42,9 @@ training_data/
 ② 取り込み    ./dev.ps1 pull                     → training_data/eval
 ③ 昇格        ./dev.ps1 promote [--IncludeUnedited]
               edited=true (四隅を手で直した) のみ昇格。昇格すると eval/ からは移動
-④ 学習        ./dev.ps1 train                    → train_real を自動混合 (--real-ratio)
+④ 学習        ./dev.ps1 train                    → 保存合成の奇数 id (--synth-ratio 0.4) と
+                                                   train_real (--real-ratio) を自動混合。
+                                                   内訳は build/<モデル名>.data.json
 ⑤ 評価        ./dev.ps1 eval -Model build/paper_seg_v2.onnx -Data training_data/eval_heldout
                (eval_heldout_rot90 / eval_hard / eval_web も。現行モデルと必ず比較)
                合成の条件別内訳: tools/eval_synthetic.py -M assets/models/paper_seg.onnx
