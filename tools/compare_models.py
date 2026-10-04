@@ -34,7 +34,10 @@ ROOT = os.path.join(HERE, "..")
 def default_images():
     real = sorted(glob.glob(os.path.join(ROOT, "training_data", "real_captures", "*.jpg")))
     held = [p for p in real if os.path.splitext(os.path.basename(p))[0] not in REAL_BG]
-    extra = [os.path.join(HERE, n) for n in ("user_scene.jpg", "upright_scene.jpg", "fail_upright.jpg")]
+    # 手元の実写サンプル (個人の撮影環境が写るので git 管理外の training_data に置く)
+    samples = os.path.join(ROOT, "training_data", "tools_samples")
+    extra = [os.path.join(samples, n)
+             for n in ("user_scene.jpg", "upright_scene.jpg", "fail_upright.jpg")]
     return held + [p for p in extra if os.path.exists(p)]
 
 
