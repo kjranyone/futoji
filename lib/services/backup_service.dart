@@ -187,8 +187,15 @@ class BackupService {
       encoder.addArchiveFile(ArchiveFile.string('manifest.json', manifest));
       encoder.addArchiveFile(ArchiveFile.string('data.json', data));
       // WebP は圧縮済みなので無圧縮で格納する (時間がかかるだけで小さくならない)
+      // (archive 4.x は addFile の level では無圧縮にならず、ArchiveFile.compression で指定する)
       for (final f in files) {
-        await encoder.addFile(File(f[0]), f[1], ZipFileEncoder.store);
+        final input = InputFileStream(f[0]);
+        try {
+          encoder.addArchiveFile(ArchiveFile.stream(f[1], input)
+            ..compression = CompressionType.none);
+        } finally {
+          await input.close();
+        }
       }
     } finally {
       await encoder.close();

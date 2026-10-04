@@ -122,6 +122,14 @@ void main() {
     expect(result.documentCount, 2);
     expect(result.pageCount, 3);
     expect(result.missingImages, 0);
+    // 画像 (WebP) は無圧縮で格納する
+    final zipStream = InputFileStream(result.file.path);
+    try {
+      final zip = ZipDecoder().decodeStream(zipStream);
+      expect(zip.findFile('images/docAp0.webp')!.compression, CompressionType.none);
+    } finally {
+      zipStream.closeSync();
+    }
 
     // 端末のデータをすべて失った状態にする
     await DbService.documents.clear();

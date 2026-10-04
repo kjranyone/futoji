@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -65,14 +66,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final result = await _withProgress('バックアップを作成中…', BackupService.export);
       if (!mounted) return;
-      if (result.missingImages > 0) {
-        showSnackBar(context, '画像が見つからない ${result.missingImages} ページは含めていません');
+      final summary = '教材 ${result.documentCount} 件・${result.pageCount} ページ';
+      final missing = result.missingImages > 0
+          ? ' (画像が見つからない ${result.missingImages} ページは含めていません)'
+          : '';
+      // iOS は共有シートに「ファイルに保存」があるので共有だけ。Android は共有先に
+      // 保存アプリが無い端末もあるため、保存先を選ぶ (SAF) か共有かを選んでもらう。
+      final how = Platform.isAndroid ? await _askExportTarget(summary) : 'share';
+      if (how == null || !mounted) return;
+      if (how == 'save') {
+        final name = result.file.uri.pathSegments.last;
+        final saved = await _saveChannel.invokeMethod<bool>('saveAs', <String, String>{
+          'path': result.file.path,
+          'name': name,
+          'mimeType': 'application/zip',
+        });
+        if (saved == true && mounted) {
+          showSnackBar(context, 'バックアップを保存しました ($summary)$missing');
+        }
+        return;
       }
+      if (missing.isNotEmpty) showSnackBar(context, missing.trim());
       await SharePlus.instance.share(
         ShareParams(
           files: <XFile>[XFile(result.file.path, mimeType: 'application/zip')],
-          text: 'MusicBook のバックアップ (教材 ${result.documentCount} 件・'
-              '${result.pageCount} ページ)',
+          text: 'MusicBook のバックアップ ($summary)',
         ),
       );
     } catch (e) {
@@ -80,6 +98,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
       showSnackBar(context, 'バックアップの作成に失敗しました: $e');
     }
   }
+
+  static const MethodChannel _saveChannel = MethodChannel('mymusicbook/save');
+
+  /// 書き出した zip の渡し先を選ぶ ('save' / 'share' / キャンセルで null)。
+  Future<String?> _askExportTarget(String summary) => showModalBottomSheet<String>(
+        context: context,
+        builder: (ctx) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              ListTile(title: Text('バックアップを作成しました ($summary)')),
+              ListTile(
+                leading: const Icon(Icons.save_alt_outlined),
+                title: const Text('保存先を選んで保存'),
+                subtitle: const Text('端末内のフォルダや Google ドライブなど'),
+                onTap: () => Navigator.of(ctx).pop('save'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.share_outlined),
+                title: const Text('他のアプリで共有'),
+                onTap: () => Navigator.of(ctx).pop('share'),
+              ),
+            ],
+          ),
+        ),
+      );
 
   Future<void> _restoreBackup() async {
     final ok = await showDialog<bool>(
@@ -156,7 +200,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             leading: const Icon(Icons.backup_outlined),
             title: const Text('バックアップを書き出す'),
             subtitle: const Text('全教材 (画像・手書きメモ・タグ) を zip にまとめ、'
-                'Google ドライブなどに保存します'),
+                '端末のフォルダや Google ドライブなどに保存します'),
             onTap: _exportBackup,
           ),
           ListTile(

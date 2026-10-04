@@ -36,8 +36,9 @@ flutter build appbundle --release --target-platform android-arm64   # Play 提�
 - [ ] 実機で 撮影 → 切り抜き → 保存 → 閲覧 → 手書き → PDF 共有 を一通り確認
 - [ ] 設定画面の「開発者向け」がすべてオフの状態で通常利用に問題がない
 - [ ] 設定 → オープンソースライセンス が開ける
-- [ ] 設定 → バックアップを書き出す → Google ドライブに保存 → アンインストール → 再インストール →
-      バックアップから復元 で教材・手書き・タグが戻る
+- [ ] 設定 → バックアップを書き出す → 保存先を選んで保存 (Download / Google ドライブ) → アンインストール →
+      再インストール → バックアップから復元 で教材・手書き・タグが戻る
+      (2026-10-04 HiPad で Download 経由を確認済み。Drive アプリの無い端末だったため Drive は未確認)
 - [ ] プライバシーポリシー ([PRIVACY_POLICY.md](PRIVACY_POLICY.md)) を公開 URL に置き、Play Console に登録
 
 ### Play Console のデータ安全性 (回答の根拠)
