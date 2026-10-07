@@ -185,6 +185,14 @@ class _ViewerScreenState extends State<ViewerScreen> {
                   style: const TextStyle(fontSize: 15),
                 ),
                 actions: <Widget>[
+                  // 閲覧中は下のバーを出さず、手書きの入口はここに置く (ページを広く表示する)
+                  if (!_drawMode)
+                    TextButton.icon(
+                      onPressed: pages.isEmpty ? null : () => setState(() => _drawMode = true),
+                      icon: const Icon(Icons.edit_outlined, size: 20),
+                      label: const Text('手書き'),
+                      style: TextButton.styleFrom(foregroundColor: Colors.white),
+                    ),
                   IconButton(
                     tooltip: _showStrokes ? 'メモを隠す' : 'メモを表示',
                     icon: Icon(_showStrokes ? Icons.visibility : Icons.visibility_off),
@@ -283,8 +291,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
                   ),
                 ),
               ),
+        // 下のバーは手書き中のツール (ペン・消しゴム) だけ。閲覧中はページを広く使う
         bottomNavigationBar:
-            pages.isEmpty || !showChrome ? null : _buildToolbar(pages[_index]),
+            pages.isEmpty || !_drawMode ? null : _buildToolbar(pages[_index]),
       ),
     );
   }
@@ -299,33 +308,6 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   Widget _buildToolbar(MusicPage page) {
     final theme = Theme.of(context);
-    if (!_drawMode) {
-      return SafeArea(
-        child: Container(
-          color: Colors.black87,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          child: Row(
-            children: <Widget>[
-              FilledButton.icon(
-                onPressed: () => setState(() => _drawMode = true),
-                icon: const Icon(Icons.edit, size: 18),
-                label: const Text('手書き'),
-                style: FilledButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                ),
-              ),
-              const Spacer(),
-              Text(
-                'スワイプでページ送り',
-                style: TextStyle(color: Colors.white38, fontSize: 12),
-              ),
-              const Spacer(),
-              const SizedBox(width: 8),
-            ],
-          ),
-        ),
-      );
-    }
     return SafeArea(
       child: Container(
         color: Colors.black87,

@@ -140,4 +140,22 @@ void main() {
     expect(iv.transformationController!.value.getMaxScaleOnAxis(), greaterThan(1.5));
   });
   }
+
+  testWidgets('閲覧中は下のバーを出さず、手書きはヘッダから始める', (tester) async {
+    await openViewer(tester);
+    expect(find.text('スワイプでページ送り'), findsNothing);
+    expect(find.text('消しゴム'), findsNothing, reason: '閲覧中は手書きツールを出さない');
+    final header = find.byType(AppBar);
+    expect(find.descendant(of: header, matching: find.text('手書き')), findsOneWidget);
+
+    await tester.tap(find.text('手書き'));
+    await tester.pumpAndSettle();
+    expect(find.text('消しゴム'), findsOneWidget, reason: '手書き中は下にツールを出す');
+    expect(find.descendant(of: header, matching: find.text('手書き')), findsNothing,
+        reason: '手書き中はヘッダのボタンを隠す');
+
+    await tester.tap(find.byTooltip('閲覧に戻る'));
+    await tester.pumpAndSettle();
+    expect(find.text('消しゴム'), findsNothing);
+  });
 }
