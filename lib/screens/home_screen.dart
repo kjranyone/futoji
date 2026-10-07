@@ -10,17 +10,28 @@ import '../screens/settings_screen.dart';
 import '../services/db_service.dart';
 import '../services/search.dart';
 import '../state/app_state.dart';
+import '../theme.dart';
 import '../utils.dart';
 import '../widgets/dialogs.dart';
 
-class HomeScreen extends StatefulWidget {
+/// ブック一覧。ブック一覧・ページ一覧・ビューアは黒背景で揃える。
+/// テーマは画面の外側に置く (内側だと、ここから開くダイアログやメニューに届かない)。
+class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  Widget build(BuildContext context) =>
+      Theme(data: buildBrowseTheme(), child: const _HomeView());
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeView extends StatefulWidget {
+  const _HomeView();
+
+  @override
+  State<_HomeView> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<_HomeView> {
   bool _searching = false;
   String _query = '';
   final TextEditingController _searchController = TextEditingController();
@@ -56,7 +67,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 onChanged: (v) => setState(() => _query = v),
               )
-            : const Text('MusicBook',
+            : const Text('全てのブック',
                 style: TextStyle(fontWeight: FontWeight.w700)),
         centerTitle: false,
         actions: <Widget>[

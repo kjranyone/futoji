@@ -8,11 +8,14 @@ import '../models/music_page.dart';
 import '../screens/camera_screen.dart';
 import '../screens/viewer_screen.dart';
 import '../state/app_state.dart';
+import '../theme.dart';
 import '../widgets/dialogs.dart';
 import '../widgets/edge_swipe_back.dart';
 import '../widgets/pdf_actions.dart';
 
-class DocumentScreen extends StatefulWidget {
+/// ページ一覧。ブック一覧・ページ一覧・ビューアは黒背景で揃える。
+/// テーマは画面の外側に置く (内側だと、ここから開くダイアログやメニューに届かない)。
+class DocumentScreen extends StatelessWidget {
   const DocumentScreen({super.key, required this.document});
 
   static const String routeName = '/document';
@@ -20,10 +23,20 @@ class DocumentScreen extends StatefulWidget {
   final MusicDocument document;
 
   @override
-  State<DocumentScreen> createState() => _DocumentScreenState();
+  Widget build(BuildContext context) =>
+      Theme(data: buildBrowseTheme(), child: _DocumentView(document: document));
 }
 
-class _DocumentScreenState extends State<DocumentScreen> {
+class _DocumentView extends StatefulWidget {
+  const _DocumentView({required this.document});
+
+  final MusicDocument document;
+
+  @override
+  State<_DocumentView> createState() => _DocumentScreenState();
+}
+
+class _DocumentScreenState extends State<_DocumentView> {
   /// 並び替えモード中の並び (null = 通常表示)。「完了」まで保存しない。
   List<MusicPage>? _reorder;
 

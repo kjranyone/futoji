@@ -1,11 +1,11 @@
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'licenses.dart';
 import 'screens/home_screen.dart';
+import 'theme.dart';
 import 'services/db_service.dart';
 import 'services/self_test.dart';
 import 'services/storage.dart';
@@ -42,24 +42,3 @@ class MusicBookApp extends StatelessWidget {
     );
   }
 }
-
-/// アプリのテーマ (テストからも使う)。
-ThemeData buildAppTheme() => ThemeData(
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF3B4A9F), // 楽譜・インクを想起させる深い藍色
-      ),
-      useMaterial3: true,
-      // 全プラットフォームで iOS と同じ遷移にし、画面の左端からのスワイプで戻れるようにする
-      // (Android の 3 ボタンナビゲーションでも使える)。
-      pageTransitionsTheme: const PageTransitionsTheme(
-        builders: <TargetPlatform, PageTransitionsBuilder>{
-          TargetPlatform.android: CupertinoPageTransitionsBuilder(),
-          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-        },
-      ),
-      fontFamilyFallback: const <String>[
-        'Hiragino Sans',
-        'Noto Sans JP',
-        'Meiryo',
-      ],
-    );

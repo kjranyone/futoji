@@ -3,7 +3,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mymusicbook/main.dart';
+import 'package:mymusicbook/theme.dart';
 import 'package:mymusicbook/widgets/edge_swipe_back.dart';
 
 void main() {

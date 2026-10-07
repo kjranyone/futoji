@@ -8,6 +8,7 @@ import 'package:mymusicbook/models/adapters.dart';
 import 'package:mymusicbook/models/music_document.dart';
 import 'package:mymusicbook/models/music_page.dart';
 import 'package:mymusicbook/screens/document_screen.dart';
+import 'package:mymusicbook/screens/home_screen.dart';
 import 'package:mymusicbook/services/db_service.dart';
 import 'package:mymusicbook/state/app_state.dart';
 import 'package:provider/provider.dart';
@@ -117,5 +118,32 @@ void main() {
 
     expect(savedOrder(), <String>['A', 'B', 'C']);
     expect(find.text('完了'), findsNothing);
+  });
+
+  testWidgets('ブック一覧は「全てのブック」・黒背景、ページ一覧も黒背景でメニューも暗い配色', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(500, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.runAsync(() => tester.pumpWidget(ChangeNotifierProvider<AppState>.value(
+          value: app,
+          child: const MaterialApp(home: HomeScreen()),
+        )));
+    await tester.pumpAndSettle();
+    expect(find.text('全てのブック'), findsOneWidget);
+    Color bg() => tester
+        .widget<Scaffold>(find.byType(Scaffold).last)
+        .backgroundColor ??
+        Theme.of(tester.element(find.byType(Scaffold).last)).scaffoldBackgroundColor;
+    expect(bg(), Colors.black);
+
+    await tester.tap(find.text('教材'));
+    await tester.pumpAndSettle();
+    expect(find.byType(DocumentScreen), findsOneWidget);
+    expect(bg(), Colors.black);
+
+    // 右上のメニュー (ボトムシート) も暗い配色になる
+    await tester.tap(find.byTooltip('メニュー'));
+    await tester.pumpAndSettle();
+    final sheetTheme = Theme.of(tester.element(find.text('ページを並び替え')));
+    expect(sheetTheme.brightness, Brightness.dark);
   });
 }
