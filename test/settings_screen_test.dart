@@ -56,7 +56,7 @@ void main() {
       value: app,
       child: const MaterialApp(home: SettingsScreen()),
     ));
-    expect(find.text('オープンソースライセンス'), findsOneWidget);
+    expect(find.text('このアプリについて'), findsOneWidget);
 
     await tester.runAsync(() async {
       await tester.tap(find.text('検出改善用に切り抜き結果を保存'));

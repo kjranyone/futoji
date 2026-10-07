@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../screens/about_screen.dart';
 import '../services/backup_service.dart';
 import '../services/self_test.dart';
 import '../services/training_capture.dart';
@@ -292,11 +293,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const Divider(),
             ListTile(
-              leading: const Icon(Icons.description_outlined),
-              title: const Text('オープンソースライセンス'),
-              onTap: () => showLicensePage(
-                context: context,
-                applicationName: 'MusicBook',
+              leading: const Icon(Icons.info_outline),
+              title: const Text('このアプリについて'),
+              subtitle: const Text('バージョン・プライバシーポリシー・ライセンス'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const AboutScreen()),
               ),
             ),
             const Divider(),
