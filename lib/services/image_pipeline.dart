@@ -148,7 +148,7 @@ Future<List<Object?>?> _aiArgs() async {
 /// 検出用に幅 [StaffDewarp.workWidth] の台形補正済みグレースケールを作って推定し、
 /// 結果は正規化座標なので保存サイズの台形補正にそのまま使える。
 /// 五線が見つからない・推定が怪しいときは null (補正しない)。
-PageDewarp? estimateDewarpForQuad({
+Future<PageDewarp?> estimateDewarpForQuad({
   required Uint8List src,
   required int srcW,
   required int srcH,
@@ -156,6 +156,7 @@ PageDewarp? estimateDewarpForQuad({
   required List<Offset> srcQuad,
   required int outW,
   required int outH,
+  int? workers,
 }) {
   const w = StaffDewarp.workWidth;
   final h = math.max(16, (outH * w / outW).round());
@@ -173,15 +174,16 @@ PageDewarp? estimateDewarpForQuad({
     gray[i] = (0.299 * rgb[i * 3] + 0.587 * rgb[i * 3 + 1] + 0.114 * rgb[i * 3 + 2])
         .round();
   }
-  return StaffDewarp.estimate(gray, w, h);
+  return StaffDewarp.estimate(gray, w, h,
+      workers: workers ?? StaffDewarp.defaultWorkers);
 }
 
 /// isolate 上で実行する重い前処理 (回転→台形補正→BMP化)。
 /// [decoded] は正立・長辺 [_saveCap] 以下にデコード済みの画像。
 /// クロージャ経由で this を送らないよう top-level 関数にしてある。
-_Prepared _prepareScanData(img.Image decoded, List<List<double>> corners,
+Future<_Prepared> _prepareScanData(img.Image decoded, List<List<double>> corners,
     int rotationDeg, List<Object?>? frame, bool reduceColors, List<Object?>? ai,
-    bool dewarp) {
+    bool dewarp) async {
     final timings = <String, int>{};
     final sw = Stopwatch()..start();
     void lap(String name) {
@@ -230,7 +232,7 @@ _Prepared _prepareScanData(img.Image decoded, List<List<double>> corners,
     PageDewarp? field;
     if (dewarp) {
       try {
-        field = estimateDewarpForQuad(
+        field = await estimateDewarpForQuad(
           src: srcBytes,
           srcW: srcW,
           srcH: srcH,

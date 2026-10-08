@@ -1,3 +1,4 @@
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -28,20 +29,38 @@ class StaffDewarp {
   /// 変位場の y 方向の次数。
   static const int degY = 2;
 
+  /// 傾き探索で列をまとめる幅 (px)。
+  static const int _blockW = 5;
+
+  /// 検出の短冊の走査を何本の isolate で分けるか。既定は 1 (分けない)。
+  ///
+  /// 実機 (Cortex-A76 x2 + A55 x6) では分けるほど遅かった (1 本 約 0.75 秒 →
+  /// 2 本 約 1.1 秒 → 4 本 約 1.4 秒)。isolate の起動は 1 本 0.5ms と安いが、
+  /// 二値化済みの画像 (約 2MB) を 1 本ごとにコピーするのに約 20ms かかり、
+  /// 検出 3 回 x 本数ぶん積み上がる。省電力コアに回った分の待ちも出る。
+  /// `--dart-define=DEWARP_WORKERS=n` で上書きできる (計測用)。
+  static int get defaultWorkers {
+    const forced = int.fromEnvironment('DEWARP_WORKERS');
+    return forced > 0 ? forced : 1;
+  }
+
   /// 推定する。[gray] は台形補正済みのグレースケール (幅 [workWidth] 前後)。
   ///
   /// 検出 → 当てはめを 2 回繰り返す (急な曲がりは 1 回では拾い切れないため)。
   /// 各回とも、補正後に検出し直して曲がりが 2 割以上減らなければ、その回は捨てる。
-  static PageDewarp? estimate(Uint8List gray, int w, int h, {int passes = 2}) {
+  /// 検出の大半を占める短冊の走査は [workers] 本の isolate で分担する
+  /// (1 なら呼び出し元の isolate だけで処理する)。
+  static Future<PageDewarp?> estimate(Uint8List gray, int w, int h,
+      {int passes = 2, int workers = 1}) async {
     final fields = <StaffField>[];
     var cur = gray;
-    var lines = detectLines(cur, w, h);
+    var lines = await detectLinesParallel(cur, w, h, workers);
     for (int pass = 0; pass < passes; pass++) {
       final field = fitField(lines, w, h);
       if (field == null) break;
       final next = PageDewarp(<StaffField>[...fields, field]);
       final nxt = next.remapGray(gray, w, h);
-      final nextLines = detectLines(nxt, w, h);
+      final nextLines = await detectLinesParallel(nxt, w, h, workers);
       // NaN (線が無い) との比較は false になり、補正を捨てる側に倒れる
       if (!(bend(nextLines) < 0.8 * bend(lines))) break;
       fields.add(field);
@@ -62,18 +81,37 @@ class StaffDewarp {
   /// 4. 同じ五線に重なったトラックは長いほうを残し、横幅の 1/4 以上・
   ///    範囲内の短冊の半分以上で見つかった五線だけを採用する
   static List<StaffLine> detectLines(Uint8List gray, int w, int h) {
-    final ink = _adaptiveInk(gray, w, h);
-    final (t, sp) = _staffMetrics(ink, w, h);
-    // 列ごとに連続したメモリにしておく (投影の内側ループを速くするため)
-    final inkT = Uint8List(w * h);
-    for (int y = 0; y < h; y++) {
-      final row = y * w;
-      for (int x = 0; x < w; x++) {
-        inkT[x * h + y] = ink[row + x];
-      }
-    }
-    final sw = math.max(40, w ~/ 24);
-    final step = sw ~/ 2;
+    final pr = _prepare(gray, w, h);
+    return _assemble(pr, <List<_Det>>[_scanStrips(pr, 0, 1)]);
+  }
+
+  /// [detectLines] の並列版。短冊を [workers] 組に交互に振り分け、
+  /// 1 組は呼び出し元で、残りは別 isolate で走査する。
+  static Future<List<StaffLine>> detectLinesParallel(
+      Uint8List gray, int w, int h, int workers) async {
+    final pr = _prepare(gray, w, h);
+    final n = math.min(workers, pr.nStrips);
+    if (n <= 1) return _assemble(pr, <List<_Det>>[_scanStrips(pr, 0, 1)]);
+    final others = <Future<List<_Det>>>[
+      for (int i = 1; i < n; i++) Isolate.run(() => _scanStrips(pr, i, n)),
+    ];
+    final mine = _scanStrips(pr, 0, n);
+    return _assemble(pr, <List<_Det>>[mine, ...await Future.wait(others)]);
+  }
+
+  /// 二値化・線の太さと間隔の推定・転置 (短冊の走査の前処理)。
+  static _Prep _prepare(Uint8List gray, int w, int h) {
+    final inkT = _adaptiveInkT(gray, w, h);
+    final (t, sp) = _staffMetrics(inkT, w, h);
+    return _Prep(inkT, w, h, t, sp);
+  }
+
+  /// 短冊 [first], first + [stride], ... を走査し、見つかった五線の候補を返す
+  /// (別 isolate で動かすので、引数は送れるデータだけにしてある)。
+  static List<_Det> _scanStrips(_Prep pr, int first, int stride) {
+    final inkT = pr.inkT;
+    final h = pr.h, t = pr.t, sp = pr.sp;
+    final sw = pr.sw, step = pr.step;
     const nSlopes = 17;
     final lo = <int>[for (int k = -2; k <= 2; k++) (k * sp).round()];
     final go = <int>[for (final g in const [-1.5, -0.5, 0.5, 1.5]) (g * sp).round()];
@@ -85,11 +123,30 @@ class StaffDewarp {
     final pb = Float64List(h);
     final pm = Float64List(h);
     final comb = Float64List(h);
-    for (int x0 = 0; x0 + sw <= w; x0 += step) {
+    final nBlocks = (sw + _blockW - 1) ~/ _blockW;
+    final blockSum = Int32List(nBlocks * h);
+    final blockCenter = Float64List(nBlocks);
+    for (int si0 = first; si0 < pr.nStrips; si0 += stride) {
+      final x0 = si0 * step;
       // 1. 傾きを振った投影のうち、最も鋭い (二乗和が最大の) もの。
       //    -0.2..0.2 を 0.025 刻み (17 通り) の格子で、粗密に探す
-      //    (0.1 刻みの 5 通り → ±0.05 → ±0.025。全通りの約半分の計算で済む)
+      //    (0.1 刻みの 5 通り → ±0.05 → ±0.025。全通りの約半分の計算で済む)。
+      //    短冊を 5 列ずつのまとまりに分けて先に足しておき、傾きごとには
+      //    まとまりの中心でのずれでまとまりを足し合わせる (まとまり内のずれの差は
+      //    最大 0.4px で、後段の ±1px の許容に収まる。傾きごとの計算が 1/5 になる)。
       final xc = (sw - 1) / 2;
+      for (int bi = 0; bi < nBlocks; bi++) {
+        final xa = bi * _blockW, xb = math.min(sw, xa + _blockW);
+        final o = bi * h;
+        blockSum.fillRange(o, o + h, 0);
+        for (int x = xa; x < xb; x++) {
+          final base = (x0 + x) * h;
+          for (int y = 0; y < h; y++) {
+            blockSum[o + y] += inkT[base + y];
+          }
+        }
+        blockCenter[bi] = (xa + xb - 1) / 2 - xc;
+      }
       final scores = Float64List(nSlopes)..fillRange(0, nSlopes, -1);
       double bestScore = -1;
       int bestSi = nSlopes ~/ 2;
@@ -97,16 +154,16 @@ class StaffDewarp {
         if (si < 0 || si >= nSlopes || scores[si] >= 0) return;
         final s = -0.2 + 0.4 * si / (nSlopes - 1);
         p.fillRange(0, h, 0);
-        for (int x = 0; x < sw; x++) {
-          final sh = (s * (x - xc)).round() % h;
-          final base = (x0 + x) * h;
-          // p[y] += ink[(y + sh) mod h]
+        for (int bi = 0; bi < nBlocks; bi++) {
+          final sh = (s * blockCenter[bi]).round() % h;
+          final o = bi * h;
+          // p[y] += block[(y + sh) mod h]
           final split = h - sh;
           for (int y = 0; y < split; y++) {
-            p[y] += inkT[base + y + sh];
+            p[y] += blockSum[o + y + sh];
           }
           for (int y = split; y < h; y++) {
-            p[y] += inkT[base + y + sh - h];
+            p[y] += blockSum[o + y + sh - h];
           }
         }
         double score = 0;
@@ -192,10 +249,24 @@ class StaffDewarp {
         dets.add(_Det(x0 + (sw - 1) / 2, bestSlope, ys));
       }
     }
+    return dets;
+  }
 
-    // 3. 短冊をまたいでつなぐ (dets は x の昇順に並んでいる)
+  /// 短冊ごとの候補をつないで五線にする。[parts] は [_scanStrips] の結果の組。
+  static List<StaffLine> _assemble(_Prep pr, List<List<_Det>> parts) {
+    final w = pr.w, sp = pr.sp, sw = pr.sw, step = pr.step;
+    // x の昇順 (同じ短冊の中は見つけた順) に並べ直す。組ごとに x は昇順なので安定に併合する
+    final dets = <_Det>[for (final p in parts) ...p];
+    final order = List<int>.generate(dets.length, (i) => i)
+      ..sort((a, b) {
+        final c = dets[a].x.compareTo(dets[b].x);
+        return c != 0 ? c : a.compareTo(b);
+      });
+    final sorted = <_Det>[for (final i in order) dets[i]];
+
+    // 3. 短冊をまたいでつなぐ
     final tracks = <List<_Det>>[];
-    for (final d in dets) {
+    for (final d in sorted) {
       List<_Det>? bestTr;
       double bd = 0.8 * sp;
       for (final tr in tracks) {
@@ -250,45 +321,62 @@ class StaffDewarp {
   }
 
   /// 適応二値化 (31x31 の局所平均 - 12 以下をインク)。cv2.adaptiveThreshold 相当。
-  static Uint8List _adaptiveInk(Uint8List gray, int w, int h) {
+  ///
+  /// 結果は列ごとに連続した並び (inkT[x * h + y]) で返す (後段の投影と
+  /// 連なりの集計が列方向に走るため)。積分画像は作らず、縦の窓の和を列ごとに
+  /// 持って行ごとに更新し、横は行内の累積和で取る (確保するのは列数ぶんだけ。
+  /// 積分画像は 1 回の検出で約 16MB になり、実機で GC が効いていた)。
+  static Uint8List _adaptiveInkT(Uint8List gray, int w, int h) {
     const r = 15;
-    final integ = Int64List((w + 1) * (h + 1));
+    final col = Int32List(w); // 行 [y0, y1) の列ごとの和
+    final pre = Int32List(w + 1); // col の累積和
+    final inkT = Uint8List(w * h);
+    int y0 = 0, y1 = 0;
     for (int y = 0; y < h; y++) {
-      int rowSum = 0;
-      final o = (y + 1) * (w + 1);
-      final po = y * (w + 1);
+      final ny0 = y - r < 0 ? 0 : y - r;
+      final ny1 = y + r + 1 > h ? h : y + r + 1;
+      while (y1 < ny1) {
+        final o = y1 * w;
+        for (int x = 0; x < w; x++) {
+          col[x] += gray[o + x];
+        }
+        y1++;
+      }
+      while (y0 < ny0) {
+        final o = y0 * w;
+        for (int x = 0; x < w; x++) {
+          col[x] -= gray[o + x];
+        }
+        y0++;
+      }
       for (int x = 0; x < w; x++) {
-        rowSum += gray[y * w + x];
-        integ[o + x + 1] = integ[po + x + 1] + rowSum;
+        pre[x + 1] = pre[x] + col[x];
+      }
+      final rows = y1 - y0;
+      final o = y * w;
+      for (int x = 0; x < w; x++) {
+        final x0 = x - r < 0 ? 0 : x - r;
+        final x1 = x + r + 1 > w ? w : x + r + 1;
+        final cnt = rows * (x1 - x0);
+        // gray <= 平均 - 12  ⇔  gray * cnt <= 和 - 12 * cnt (割り算を避ける)
+        if (gray[o + x] * cnt <= pre[x1] - pre[x0] - 12 * cnt) inkT[x * h + y] = 1;
       }
     }
-    final ink = Uint8List(w * h);
-    for (int y = 0; y < h; y++) {
-      final y0 = math.max(0, y - r), y1 = math.min(h, y + r + 1);
-      for (int x = 0; x < w; x++) {
-        final x0 = math.max(0, x - r), x1 = math.min(w, x + r + 1);
-        final s = integ[y1 * (w + 1) + x1] -
-            integ[y0 * (w + 1) + x1] -
-            integ[y1 * (w + 1) + x0] +
-            integ[y0 * (w + 1) + x0];
-        final mean = s / ((y1 - y0) * (x1 - x0));
-        if (gray[y * w + x] <= mean - 12) ink[y * w + x] = 1;
-      }
-    }
-    return ink;
+    return inkT;
   }
 
   /// 五線の太さ t と線間隔 sp (線の中心どうし, px) を、縦方向の
   /// 黒の連なり / 黒に挟まれた白の連なりの長さの最頻値から求める。
-  static (int, double) _staffMetrics(Uint8List ink, int w, int h) {
+  static (int, double) _staffMetrics(Uint8List inkT, int w, int h) {
     final black = Int32List(12);
     final white = Int32List(60);
     for (int x = 0; x < w; x++) {
       int run = 0;
       int prev = 0;
       int whiteRun = -1; // 黒を見るまでは数えない (上端の白は挟まれていない)
+      final base = x * h;
       for (int y = 0; y <= h; y++) {
-        final v = y < h ? ink[y * w + x] : 0;
+        final v = y < h ? inkT[base + y] : 0;
         if (v != 0) {
           if (prev == 0) {
             if (whiteRun > 0 && whiteRun < 60) white[whiteRun]++;
@@ -582,6 +670,25 @@ class StaffDewarp {
     final n = s.length;
     return n.isOdd ? s[n ~/ 2] : (s[n ~/ 2 - 1] + s[n ~/ 2]) / 2;
   }
+}
+
+class _Prep {
+  _Prep(this.inkT, this.w, this.h, this.t, this.sp)
+      : sw = math.max(40, w ~/ 24),
+        step = math.max(40, w ~/ 24) ~/ 2;
+
+  /// インク (0/1) を列ごとに並べたもの: inkT[x * h + y]。
+  final Uint8List inkT;
+  final int w, h;
+
+  /// 五線の太さ、線間隔 (px)。
+  final int t;
+  final double sp;
+
+  /// 短冊の幅と送り (半分ずつ重ねる)。
+  final int sw, step;
+
+  int get nStrips => w < sw ? 0 : (w - sw) ~/ step + 1;
 }
 
 class _Det {

@@ -67,23 +67,23 @@ Uint8List _curl(Uint8List src, {double amp = 0.035, double squeeze = 0.05}) {
 }
 
 void main() {
-  test('曲がった五線をまっすぐに戻す', () {
+  test('曲がった五線をまっすぐに戻す', () async {
     final curled = _curl(_flatScore());
     final before = StaffDewarp.detectLines(curled, _w, _h);
     expect(before.length, 40, reason: '五線 8 段 x 5 本');
     final b0 = StaffDewarp.bend(before);
     expect(b0, greaterThan(15));
 
-    final dewarp = StaffDewarp.estimate(curled, _w, _h);
+    final dewarp = await StaffDewarp.estimate(curled, _w, _h);
     expect(dewarp, isNotNull);
     final out = dewarp!.remapGray(curled, _w, _h);
     final b1 = StaffDewarp.bend(StaffDewarp.detectLines(out, _w, _h));
     expect(b1, lessThan(3), reason: '補正前 $b0 px');
   });
 
-  test('まっすぐな楽譜はほぼ動かさない', () {
+  test('まっすぐな楽譜はほぼ動かさない', () async {
     final flat = _flatScore();
-    final dewarp = StaffDewarp.estimate(flat, _w, _h);
+    final dewarp = await StaffDewarp.estimate(flat, _w, _h);
     if (dewarp != null) {
       for (int i = 0; i <= 10; i++) {
         for (int j = 0; j <= 10; j++) {
@@ -94,10 +94,29 @@ void main() {
     }
   });
 
-  test('五線の無いページは補正しない', () {
+  test('短冊の走査を isolate で分けても 1 本で走査したときと同じ線になる', () async {
+    final curled = _curl(_flatScore());
+    final serial = StaffDewarp.detectLines(curled, _w, _h);
+    for (final workers in const [2, 3, 8]) {
+      final par = await StaffDewarp.detectLinesParallel(curled, _w, _h, workers);
+      expect(par.length, serial.length, reason: 'workers=$workers');
+      for (int i = 0; i < serial.length; i++) {
+        expect(par[i].xs, serial[i].xs);
+        expect(par[i].ys, serial[i].ys);
+      }
+    }
+    final a = (await StaffDewarp.estimate(curled, _w, _h))!;
+    final b = (await StaffDewarp.estimate(curled, _w, _h, workers: 4))!;
+    expect(b.fields.length, a.fields.length);
+    for (int i = 0; i < a.fields.length; i++) {
+      expect(b.fields[i].coef, a.fields[i].coef);
+    }
+  });
+
+  test('五線の無いページは補正しない', () async {
     // 白紙
     final blank = Uint8List(_w * _h)..fillRange(0, _w * _h, 240);
-    expect(StaffDewarp.estimate(blank, _w, _h), isNull);
+    expect(await StaffDewarp.estimate(blank, _w, _h), isNull);
     // 等間隔の罫線が続く表 (五線の外側が空いていない)
     final table = Uint8List(_w * _h)..fillRange(0, _w * _h, 240);
     for (int r = 0; r < 60; r++) {
@@ -108,19 +127,19 @@ void main() {
       }
     }
     expect(StaffDewarp.detectLines(table, _w, _h), isEmpty);
-    expect(StaffDewarp.estimate(table, _w, _h), isNull);
+    expect(await StaffDewarp.estimate(table, _w, _h), isNull);
   });
 
-  test('五線 1 段だけのページは x だけの変位で補正する', () {
+  test('五線 1 段だけのページは x だけの変位で補正する', () async {
     final one = _curl(_flatScore(staves: 1));
-    final dewarp = StaffDewarp.estimate(one, _w, _h);
+    final dewarp = await StaffDewarp.estimate(one, _w, _h);
     expect(dewarp, isNotNull);
     expect(dewarp!.fields.first.degY, 0);
   });
 
-  test('格子補間は厳密な写像とほぼ一致する', () {
+  test('格子補間は厳密な写像とほぼ一致する', () async {
     final curled = _curl(_flatScore());
-    final dewarp = StaffDewarp.estimate(curled, _w, _h)!;
+    final dewarp = (await StaffDewarp.estimate(curled, _w, _h))!;
     double worst = 0;
     for (int i = 0; i <= 37; i++) {
       for (int j = 0; j <= 53; j++) {
@@ -132,9 +151,9 @@ void main() {
     expect(worst, lessThan(0.5));
   });
 
-  test('台形補正に合成すると、台形補正 → 湾曲補正と同じ画像になる', () {
+  test('台形補正に合成すると、台形補正 → 湾曲補正と同じ画像になる', () async {
     final curled = _curl(_flatScore());
-    final dewarp = StaffDewarp.estimate(curled, _w, _h)!;
+    final dewarp = (await StaffDewarp.estimate(curled, _w, _h))!;
     final rgb = Uint8List(_w * _h * 3);
     for (int i = 0; i < _w * _h; i++) {
       rgb[i * 3] = rgb[i * 3 + 1] = rgb[i * 3 + 2] = curled[i];

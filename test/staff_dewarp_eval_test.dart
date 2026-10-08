@@ -10,6 +10,7 @@
 // 環境変数:
 //   DEWARP_EVAL_DIR  評価データ (training_data/eval_hard)。<id>.jpg + <id>.json (QuadLabel)
 //   DEWARP_PASSES    推定の反復回数 (既定はアプリと同じ)
+//   DEWARP_WORKERS   短冊の走査を分ける isolate 数 (既定 1)
 //
 // データが無い環境ではスキップする。
 import 'dart:convert';
@@ -55,13 +56,14 @@ Uint8List _curl(Uint8List src, int w, int h,
 void main() {
   final dir = Directory(_env('DEWARP_EVAL_DIR', 'training_data/eval_hard'));
   final passes = int.tryParse(_env('DEWARP_PASSES', ''));
+  final workers = int.tryParse(_env('DEWARP_WORKERS', '')) ?? 1;
   final labels = dir.existsSync()
       ? (dir.listSync().whereType<File>().where((f) => f.path.endsWith('.json')).toList()
         ..sort((a, b) => a.path.compareTo(b.path)))
       : <File>[];
 
   test('staff dewarp eval', skip: labels.isEmpty ? '評価データがありません: ${dir.path}' : false,
-      timeout: const Timeout(Duration(minutes: 20)), () {
+      timeout: const Timeout(Duration(minutes: 20)), () async {
     final rows = <(String, int, double, double, bool, int)>[];
     for (final lf in labels) {
       final label = QuadLabel.fromJson(
@@ -95,18 +97,18 @@ void main() {
         '${stem}_curlL': _curl(flat, w, h, amp: 0.035, spineLeft: true),
         '${stem}_curlR': _curl(flat, w, h, amp: 0.05, spineLeft: false),
       };
-      cases.forEach((name, gray) {
+      for (final MapEntry(key: name, value: gray) in cases.entries) {
         final sw = Stopwatch()..start();
         final lines = StaffDewarp.detectLines(gray, w, h);
         final dewarp = passes == null
-            ? StaffDewarp.estimate(gray, w, h)
-            : StaffDewarp.estimate(gray, w, h, passes: passes);
+            ? await StaffDewarp.estimate(gray, w, h, workers: workers)
+            : await StaffDewarp.estimate(gray, w, h, passes: passes, workers: workers);
         final ms = sw.elapsedMilliseconds;
         final out = dewarp == null ? gray : dewarp.remapGray(gray, w, h);
         final b0 = StaffDewarp.bend(lines);
         final b1 = StaffDewarp.bend(StaffDewarp.detectLines(out, w, h));
         rows.add((name, lines.length, b0, b1, dewarp != null, ms));
-      });
+      }
     }
 
     final buf = StringBuffer()
