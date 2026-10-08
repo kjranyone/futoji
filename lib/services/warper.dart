@@ -167,7 +167,34 @@ Uint8List warpPerspectiveRgb({
   required int outW,
   required int outH,
   PageDewarp? dewarp,
-}) {
+}) =>
+    _warp(src, srcW, srcH, numCh, srcQuad, outW, outH, dewarp, gray: false);
+
+/// [warpPerspectiveRgb] と同じ台形補正で、輝度 (BT.601) の 1ch を返す
+/// (曲がり補正の検出用。RGB を作ってから変換する手間を省く)。
+Uint8List warpPerspectiveGray({
+  required Uint8List src,
+  required int srcW,
+  required int srcH,
+  required int numCh,
+  required List<Offset> srcQuad,
+  required int outW,
+  required int outH,
+}) =>
+    _warp(src, srcW, srcH, numCh, srcQuad, outW, outH, null, gray: true);
+
+/// 双一次補間の重みの固定小数点の桁 (2^11)。
+const int _wBits = 11;
+const int _wOne = 1 << _wBits;
+
+/// 出力の各画素 (x + 0.5, y + 0.5) を逆写像でソースへ戻し、双一次補間で取る。
+///
+/// 実機で 1 枚数百 ms かかる工程なので、画素ごとの Offset の生成と関数呼び出しを避け、
+/// 行の中では射影の分子・分母を足し算で進める (曲がり補正があるときは y が画素ごとに
+/// 変わるので直接計算する)。補間は整数の重み (2^-11 刻み) で行う。
+Uint8List _warp(Uint8List src, int srcW, int srcH, int numCh, List<Offset> srcQuad,
+    int outW, int outH, PageDewarp? dewarp,
+    {required bool gray}) {
   final dstQuad = <Offset>[
     Offset.zero,
     Offset(outW.toDouble(), 0),
@@ -175,47 +202,85 @@ Uint8List warpPerspectiveRgb({
     Offset(0, outH.toDouble()),
   ];
   // 出力 -> ソース の逆写像
-  final inv = Homography.fromPoints(dstQuad, srcQuad);
-  final out = Uint8List(outW * outH * 3);
+  final m = Homography.fromPoints(dstQuad, srcQuad).m;
+  final m0 = m[0], m1 = m[1], m2 = m[2];
+  final m3 = m[3], m4 = m[4], m5 = m[5];
+  final m6 = m[6], m7 = m[7], m8 = m[8];
+  final outCh = gray ? 1 : 3;
+  final out = Uint8List(outW * outH * outCh);
+  final maxX = srcW - 1, maxY = srcH - 1;
+  final srcWd = srcW.toDouble(), srcHd = srcH.toDouble();
+  const half = 1 << (2 * _wBits - 1);
   for (int y = 0; y < outH; y++) {
-    for (int x = 0; x < outW; x++) {
-      final p = dewarp == null
-          ? inv.apply(Offset(x + 0.5, y + 0.5))
-          : inv.apply(Offset(
-              x + 0.5, dewarp.sourceY((x + 0.5) / outW, (y + 0.5) / outH) * outH));
-      final sx = p.dx - 0.5;
-      final sy = p.dy - 0.5;
-      final oi = (y * outW + x) * 3;
-      if (sx < -1 || sy < -1 || sx > srcW || sy > srcH) {
+    final cy = y + 0.5;
+    // dewarp なしのときの行頭 (x = 0.5) の分子・分母と、x が 1 進むごとの増分
+    var nx = m0 * 0.5 + m1 * cy + m2;
+    var ny = m3 * 0.5 + m4 * cy + m5;
+    var nw = m6 * 0.5 + m7 * cy + m8;
+    var oi = y * outW * outCh;
+    for (int x = 0; x < outW; x++, oi += outCh) {
+      double px, py, pw;
+      if (dewarp == null) {
+        px = nx;
+        py = ny;
+        pw = nw;
+        nx += m0;
+        ny += m3;
+        nw += m6;
+      } else {
+        final cx = x + 0.5;
+        final yy = dewarp.sourceY(cx / outW, cy / outH) * outH;
+        px = m0 * cx + m1 * yy + m2;
+        py = m3 * cx + m4 * yy + m5;
+        pw = m6 * cx + m7 * yy + m8;
+      }
+      final sx = px / pw - 0.5;
+      final sy = py / pw - 0.5;
+      if (!(sx >= -1 && sy >= -1 && sx <= srcWd && sy <= srcHd)) {
+        // 範囲外 (NaN を含む) は白
         out[oi] = 255;
-        out[oi + 1] = 255;
-        out[oi + 2] = 255;
+        if (!gray) {
+          out[oi + 1] = 255;
+          out[oi + 2] = 255;
+        }
         continue;
       }
       final x0 = sx.floor();
       final y0 = sy.floor();
-      final fx = sx - x0;
-      final fy = sy - y0;
-      final cx0 = x0.clamp(0, srcW - 1);
-      final cy0 = y0.clamp(0, srcH - 1);
-      final cx1 = (x0 + 1).clamp(0, srcW - 1);
-      final cy1 = (y0 + 1).clamp(0, srcH - 1);
-      final rx0 = cy0 * srcW;
-      final rx1 = cy1 * srcW;
-      for (int c = 0; c < 3; c++) {
-        final i00 = (rx0 + cx0) * numCh + c;
-        final i10 = (rx0 + cx1) * numCh + c;
-        final i01 = (rx1 + cx0) * numCh + c;
-        final i11 = (rx1 + cx1) * numCh + c;
-        final p00 = src[i00].toDouble();
-        final p10 = src[i10].toDouble();
-        final p01 = src[i01].toDouble();
-        final p11 = src[i11].toDouble();
-        final v = p00 * (1 - fx) * (1 - fy) +
-            p10 * fx * (1 - fy) +
-            p01 * (1 - fx) * fy +
-            p11 * fx * fy;
-        out[oi + c] = v.round().clamp(0, 255);
+      final wx = ((sx - x0) * _wOne).toInt();
+      final wy = ((sy - y0) * _wOne).toInt();
+      final cx0 = x0 < 0 ? 0 : (x0 > maxX ? maxX : x0);
+      final cy0 = y0 < 0 ? 0 : (y0 > maxY ? maxY : y0);
+      final cx1 = x0 + 1 < 0 ? 0 : (x0 + 1 > maxX ? maxX : x0 + 1);
+      final cy1 = y0 + 1 < 0 ? 0 : (y0 + 1 > maxY ? maxY : y0 + 1);
+      final w00 = (_wOne - wx) * (_wOne - wy);
+      final w10 = wx * (_wOne - wy);
+      final w01 = (_wOne - wx) * wy;
+      final w11 = wx * wy;
+      final i00 = (cy0 * srcW + cx0) * numCh;
+      final i10 = (cy0 * srcW + cx1) * numCh;
+      final i01 = (cy1 * srcW + cx0) * numCh;
+      final i11 = (cy1 * srcW + cx1) * numCh;
+      final r = (src[i00] * w00 + src[i10] * w10 + src[i01] * w01 + src[i11] * w11 + half) >>
+          (2 * _wBits);
+      final g = (src[i00 + 1] * w00 +
+              src[i10 + 1] * w10 +
+              src[i01 + 1] * w01 +
+              src[i11 + 1] * w11 +
+              half) >>
+          (2 * _wBits);
+      final b = (src[i00 + 2] * w00 +
+              src[i10 + 2] * w10 +
+              src[i01 + 2] * w01 +
+              src[i11 + 2] * w11 +
+              half) >>
+          (2 * _wBits);
+      if (gray) {
+        out[oi] = (299 * r + 587 * g + 114 * b + 500) ~/ 1000;
+      } else {
+        out[oi] = r;
+        out[oi + 1] = g;
+        out[oi + 2] = b;
       }
     }
   }

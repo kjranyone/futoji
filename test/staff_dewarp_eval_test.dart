@@ -77,7 +77,8 @@ void main() {
       final size = outputSizeForQuad(quad);
       const w = StaffDewarp.workWidth;
       final h = (size.height * w / size.width).round();
-      final rgb = warpPerspectiveRgb(
+      // アプリと同じく、台形補正と輝度化を 1 回で行う
+      final flat = warpPerspectiveGray(
         src: decoded.getBytes(),
         srcW: decoded.width,
         srcH: decoded.height,
@@ -86,11 +87,6 @@ void main() {
         outW: w,
         outH: h,
       );
-      final flat = Uint8List(w * h);
-      for (int i = 0; i < w * h; i++) {
-        flat[i] = (0.299 * rgb[i * 3] + 0.587 * rgb[i * 3 + 1] + 0.114 * rgb[i * 3 + 2])
-            .round();
-      }
       final stem = label.image.replaceAll('.jpg', '');
       final cases = <String, Uint8List>{
         stem: flat,

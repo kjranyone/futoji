@@ -160,7 +160,7 @@ Future<PageDewarp?> estimateDewarpForQuad({
 }) {
   const w = StaffDewarp.workWidth;
   final h = math.max(16, (outH * w / outW).round());
-  final rgb = warpPerspectiveRgb(
+  final gray = warpPerspectiveGray(
     src: src,
     srcW: srcW,
     srcH: srcH,
@@ -169,11 +169,6 @@ Future<PageDewarp?> estimateDewarpForQuad({
     outW: w,
     outH: h,
   );
-  final gray = Uint8List(w * h);
-  for (int i = 0; i < w * h; i++) {
-    gray[i] = (0.299 * rgb[i * 3] + 0.587 * rgb[i * 3 + 1] + 0.114 * rgb[i * 3 + 2])
-        .round();
-  }
   return StaffDewarp.estimate(gray, w, h,
       workers: workers ?? StaffDewarp.defaultWorkers);
 }

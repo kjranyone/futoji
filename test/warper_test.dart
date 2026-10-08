@@ -163,6 +163,38 @@ void main() {
         expect(out[i], inInclusiveRange(0, 255));
       }
     });
+
+    // 高速化 (増分計算 + 整数の重み) の前の素直な実装との比較
+    final rnd = math.Random(3);
+    Uint8List noise(int w, int h, int ch) =>
+        Uint8List.fromList(List<int>.generate(w * h * ch, (_) => rnd.nextInt(256)));
+    const quads = <List<Offset>>[
+      [Offset(10, 8), Offset(150, 20), Offset(140, 110), Offset(4, 100)],
+      // ソースからはみ出す四角形 (白埋めの境界)
+      [Offset(-20, -10), Offset(170, 5), Offset(180, 130), Offset(-5, 120)],
+    ];
+
+    test('素直な実装と ±1 以内で一致する (RGB / 輝度)', () {
+      const w = 160, h = 120;
+      for (final ch in const [3, 4]) {
+        final src = noise(w, h, ch);
+        for (final quad in quads) {
+          final ref = _referenceWarp(src, w, h, ch, quad, 97, 73);
+          final out = warpPerspectiveRgb(
+              src: src, srcW: w, srcH: h, numCh: ch, srcQuad: quad, outW: 97, outH: 73);
+          for (int i = 0; i < ref.length; i++) {
+            expect((out[i] - ref[i]).abs(), lessThanOrEqualTo(1), reason: 'ch=$ch i=$i');
+          }
+          final gray = warpPerspectiveGray(
+              src: src, srcW: w, srcH: h, numCh: ch, srcQuad: quad, outW: 97, outH: 73);
+          for (int i = 0; i < gray.length; i++) {
+            final l = (0.299 * ref[i * 3] + 0.587 * ref[i * 3 + 1] + 0.114 * ref[i * 3 + 2])
+                .round();
+            expect((gray[i] - l).abs(), lessThanOrEqualTo(1), reason: 'gray ch=$ch i=$i');
+          }
+        }
+      }
+    });
   });
 
   group('outputSizeForQuad', () {
@@ -236,4 +268,45 @@ void main() {
     expect(ratio, closeTo(ratioH, 0.02));
     expect(math.max(size.width, size.height), lessThanOrEqualTo(1000));
   });
+}
+
+/// 高速化前の素直な実装 (画素ごとに逆写像して double で双一次補間)。
+Uint8List _referenceWarp(
+    Uint8List src, int srcW, int srcH, int numCh, List<Offset> srcQuad, int outW, int outH) {
+  final dstQuad = <Offset>[
+    Offset.zero,
+    Offset(outW.toDouble(), 0),
+    Offset(outW.toDouble(), outH.toDouble()),
+    Offset(0, outH.toDouble()),
+  ];
+  final inv = Homography.fromPoints(dstQuad, srcQuad);
+  final out = Uint8List(outW * outH * 3);
+  for (int y = 0; y < outH; y++) {
+    for (int x = 0; x < outW; x++) {
+      final p = inv.apply(Offset(x + 0.5, y + 0.5));
+      final sx = p.dx - 0.5;
+      final sy = p.dy - 0.5;
+      final oi = (y * outW + x) * 3;
+      if (sx < -1 || sy < -1 || sx > srcW || sy > srcH) {
+        out[oi] = out[oi + 1] = out[oi + 2] = 255;
+        continue;
+      }
+      final x0 = sx.floor();
+      final y0 = sy.floor();
+      final fx = sx - x0;
+      final fy = sy - y0;
+      final cx0 = x0.clamp(0, srcW - 1);
+      final cy0 = y0.clamp(0, srcH - 1);
+      final cx1 = (x0 + 1).clamp(0, srcW - 1);
+      final cy1 = (y0 + 1).clamp(0, srcH - 1);
+      for (int c = 0; c < 3; c++) {
+        final v = src[(cy0 * srcW + cx0) * numCh + c] * (1 - fx) * (1 - fy) +
+            src[(cy0 * srcW + cx1) * numCh + c] * fx * (1 - fy) +
+            src[(cy1 * srcW + cx0) * numCh + c] * (1 - fx) * fy +
+            src[(cy1 * srcW + cx1) * numCh + c] * fx * fy;
+        out[oi + c] = v.round().clamp(0, 255);
+      }
+    }
+  }
+  return out;
 }
