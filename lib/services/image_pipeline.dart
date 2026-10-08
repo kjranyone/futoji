@@ -14,6 +14,7 @@ import 'auto_capture.dart';
 import 'color_quantizer.dart';
 import 'fast_decode.dart';
 import 'ort_ffi.dart';
+import 'raster.dart';
 import 'staff_dewarp.dart';
 import 'storage.dart';
 import 'warper.dart';
@@ -98,18 +99,21 @@ class ImagePipeline {
     lap('isolate');
     timings?.addAll(prepared.timings);
 
-    // WebP エンコードはネイティブ (プラットフォームチャネル) なのでメイン isolate で
+    // WebP エンコードはネイティブ (プラットフォームチャネル) なのでメイン isolate で。
+    // プラグインは Android 側のスレッドプールで処理するので、本体とサムネイルを同時に投げる
+    final webpWatch = Stopwatch()..start();
+    final thumbFuture = FlutterImageCompress.compressWithList(
+      prepared.thumbBmp,
+      quality: 80,
+      format: CompressFormat.webp,
+    ).whenComplete(() => timings?['webp_thumb'] = webpWatch.elapsedMilliseconds);
     final fullWebp = await FlutterImageCompress.compressWithList(
       prepared.fullBmp,
       quality: 84,
       format: CompressFormat.webp,
     );
-    final thumbWebp = await FlutterImageCompress.compressWithList(
-      prepared.thumbBmp,
-      quality: 80,
-      format: CompressFormat.webp,
-    );
-
+    timings?['webp_full'] = webpWatch.elapsedMilliseconds;
+    final thumbWebp = await thumbFuture;
     lap('webp');
     final imageFile = File(AppPaths.imagePathFor(pageId));
     await imageFile.writeAsBytes(fullWebp);
@@ -267,7 +271,7 @@ Future<_Prepared> _prepareScanData(img.Image decoded, List<List<double>> corners
 
     // 減色オプション: 色域を分析してパレット数を自動決定し、色数を絞る
     // (白黒文書は 8 色程度に収まり、ファイルも小さくなる)
-    // img.Image.fromBytes はバッファをコピーするので、必ずその前に行う。
+    // BMP 化・サムネイル作成より前に行う (どちらも warpedBytes から作る)。
     if (reduceColors) {
       final paletteSize = ColorQuantizer.decidePaletteSize(warpedBytes);
       if (paletteSize >= 2) {
@@ -275,31 +279,15 @@ Future<_Prepared> _prepareScanData(img.Image decoded, List<List<double>> corners
       }
     }
 
-    final warped = img.Image.fromBytes(
-      width: outW,
-      height: outH,
-      bytes: warpedBytes.buffer,
-      numChannels: 3,
-    );
-
     lap('quantize');
     // WebP 変換 (ネイティブ) に渡すための中間形式。純 Dart の JPEG エンコードは
     // 実機 2 秒前後かかっていたため、ほぼコピーだけで作れる無圧縮 BMP にする。
-    final fullBmp = Uint8List.fromList(img.encodeBmp(warped));
+    final fullBmp = encodeBmp24(warpedBytes, outW, outH);
     lap('bmp');
 
-    // サムネイル (長辺 420px)
-    var thumb = warped;
-    final thumbCap = 420;
-    final thumbLong = math.max(warped.width, warped.height);
-    if (thumbLong > thumbCap) {
-      thumb = warped.width >= warped.height
-          ? img.copyResize(warped,
-              width: thumbCap, interpolation: img.Interpolation.average)
-          : img.copyResize(warped,
-              height: thumbCap, interpolation: img.Interpolation.average);
-    }
-    final thumbBmp = Uint8List.fromList(img.encodeBmp(thumb));
+    // サムネイル (長辺 420px, 面積平均)
+    final (thumbRgb, tw, th) = downscaleRgbBox(warpedBytes, outW, outH, 420);
+    final thumbBmp = encodeBmp24(thumbRgb, tw, th);
     lap('thumb');
 
     return _Prepared(
