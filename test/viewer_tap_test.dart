@@ -158,4 +158,27 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('消しゴム'), findsNothing);
   });
+
+  testWidgets('中央タップで操作のヒントが出て、数秒で消える (左右のタップでは出ない)', (tester) async {
+    await openViewer(tester);
+    double hintOpacity() => tester
+        .widget<AnimatedOpacity>(find.byKey(const ValueKey<String>('viewer-hints')))
+        .opacity;
+    expect(hintOpacity(), 0);
+
+    await tester.tapAt(const Offset(540, 450)); // 右: ページ送りだけ
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(hintOpacity(), 0);
+
+    await tester.tapAt(const Offset(300, 450)); // 中央
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(hintOpacity(), 1);
+    expect(find.text('次のページ'), findsOneWidget);
+    expect(find.textContaining('2 本指で拡大'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(hintOpacity(), 0);
+  });
 }

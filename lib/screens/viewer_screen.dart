@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart' show DeviceGestureSettings, DragStartBehavior;
@@ -38,6 +39,19 @@ class _ViewerScreenState extends State<ViewerScreen> {
   /// 中央タップで上下のバーを隠す (楽譜を画面いっぱいに見る)。
   bool _chromeHidden = false;
 
+  /// 中央タップで数秒だけ出す操作のヒント。
+  bool _showHints = false;
+  Timer? _hintTimer;
+  static const Duration hintDuration = Duration(milliseconds: 2500);
+
+  void _flashHints() {
+    _hintTimer?.cancel();
+    setState(() => _showHints = true);
+    _hintTimer = Timer(hintDuration, () {
+      if (mounted) setState(() => _showHints = false);
+    });
+  }
+
   bool _drawMode = false;
   bool _showStrokes = true;
   bool _eraser = false;
@@ -65,6 +79,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   @override
   void dispose() {
+    _hintTimer?.cancel();
     _pageController.dispose();
     super.dispose();
   }
@@ -153,6 +168,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
             duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
       case TapZone.center:
         setState(() => _chromeHidden = !_chromeHidden);
+        _flashHints();
     }
   }
 
@@ -249,7 +265,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
                   ),
                 ],
               ),
-        body: pages.isEmpty
+        body: _withHints(pages.isEmpty
             ? const Center(
                 child: Text('ページがありません', style: TextStyle(color: Colors.white54)))
             : EdgeSwipeBack(
@@ -290,13 +306,29 @@ class _ViewerScreenState extends State<ViewerScreen> {
                     ),
                   ),
                 ),
-              ),
+              )),
         // 下のバーは手書き中のツール (ペン・消しゴム) だけ。閲覧中はページを広く使う
         bottomNavigationBar:
             pages.isEmpty || !_drawMode ? null : _buildToolbar(pages[_index]),
       ),
     );
   }
+
+  /// ページの上に操作のヒントを重ねる (タッチは下へ通すので、出ている間も操作できる)。
+  Widget _withHints(Widget child) => Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          child,
+          IgnorePointer(
+            child: AnimatedOpacity(
+              key: const ValueKey<String>('viewer-hints'),
+              opacity: _showHints && !_drawMode ? 1 : 0,
+              duration: const Duration(milliseconds: 250),
+              child: const _ViewerHints(),
+            ),
+          ),
+        ],
+      );
 
   void _precacheNeighbors(List<MusicPage> pages, int index) {
     for (final d in const <int>[-1, 1]) {
@@ -693,4 +725,59 @@ TapZone tapZoneOf(double fx) {
   if (fx < 1 / 3) return TapZone.previous;
   if (fx > 2 / 3) return TapZone.next;
   return TapZone.center;
+}
+
+/// 中央タップで出す操作のヒント: 左右と中央のタップ領域と、その他の操作。
+class _ViewerHints extends StatelessWidget {
+  const _ViewerHints();
+
+  @override
+  Widget build(BuildContext context) {
+    const label = TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600);
+    Widget zone(IconData icon, String text, {bool middle = false}) => Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: middle ? 0.30 : 0.45),
+              border: middle
+                  ? const Border.symmetric(
+                      vertical: BorderSide(color: Colors.white38, width: 1))
+                  : null,
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                Icon(icon, color: Colors.white, size: 40),
+                const SizedBox(height: 6),
+                Text(text, style: label, textAlign: TextAlign.center),
+                const SizedBox(height: 2),
+                const Text('タップ', style: TextStyle(color: Colors.white70, fontSize: 12)),
+              ],
+            ),
+          ),
+        );
+    return Column(
+      children: <Widget>[
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              zone(Icons.chevron_left, '前のページ'),
+              zone(Icons.menu, 'メニューの\n表示/非表示', middle: true),
+              zone(Icons.chevron_right, '次のページ'),
+            ],
+          ),
+        ),
+        Container(
+          width: double.infinity,
+          color: Colors.black.withValues(alpha: 0.7),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: const Text(
+            'スワイプでもめくれます ・ 2 本指で拡大 ・ ダブルタップで元の大きさ ・ 左端からスワイプで一覧に戻る',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white, fontSize: 13),
+          ),
+        ),
+      ],
+    );
+  }
 }
