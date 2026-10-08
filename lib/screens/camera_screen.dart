@@ -319,6 +319,18 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
+  Future<void> _toggleDewarp() async {
+    final app = context.read<AppState>();
+    await app.setDewarp(!app.dewarp);
+    if (!mounted) return;
+    showSnackBar(
+      context,
+      app.dewarp
+          ? '曲がり補正オン: 五線を手がかりに紙面の反りをまっすぐにします'
+          : '曲がり補正オフ: 台形補正だけで保存します',
+    );
+  }
+
   /// ページを保存する。AI 仕上げが ON のときは、その間カメラのプレビューと
   /// フレーム配信を止めて CPU を空ける (止めないと推論が実機で約 2 倍遅くなった)。
   Future<void> _savePage(AppState app, String rawPath, CropResult crop) async {
@@ -492,6 +504,7 @@ class _CameraScreenState extends State<CameraScreen>
     final pageSoFar = widget.document.pageCount + 1;
     final reduceColors = context.watch<AppState>().reduceColors;
     final aiSharpen = context.watch<AppState>().aiSharpen;
+    final dewarp = context.watch<AppState>().dewarp;
     return Stack(
       children: <Widget>[
         Center(
@@ -616,6 +629,15 @@ class _CameraScreenState extends State<CameraScreen>
                   color: aiSharpen ? const Color(0xFFFFC107) : Colors.white70,
                 ),
                 onPressed: _busy ? null : _toggleAiSharpen,
+              ),
+              // 曲がり補正 (設定画面の「画質」と同じ設定)
+              IconButton(
+                tooltip: '曲がり補正',
+                icon: Icon(
+                  Icons.straighten,
+                  color: dewarp ? const Color(0xFF4FC3F7) : Colors.white70,
+                ),
+                onPressed: _busy ? null : _toggleDewarp,
               ),
               // 減色オプション (色域を認識して自動で色数を減らし軽量化)
               IconButton(

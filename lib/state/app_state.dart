@@ -34,6 +34,17 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  static const String _dewarpKey = 'dewarp_staff';
+
+  /// 五線を手がかりに紙面の曲がり (本のノド付近の反り) を補正して保存するか
+  /// (設定画面とカメラ右上、端末に保存)。五線が見つからないページは補正しない。
+  bool get dewarp => DbService.settings.get(_dewarpKey, defaultValue: true) as bool;
+
+  Future<void> setDewarp(bool value) async {
+    await DbService.settings.put(_dewarpKey, value);
+    notifyListeners();
+  }
+
   List<MusicDocument> _documents = <MusicDocument>[];
 
   /// 更新日の新しい順。
@@ -144,6 +155,7 @@ class AppState extends ChangeNotifier {
       pageId: pageId,
       reduceColors: reduceColors,
       aiSharpen: aiSharpen,
+      dewarp: dewarp,
     );
     final now = DateTime.now().millisecondsSinceEpoch;
     final page = MusicPage(

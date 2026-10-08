@@ -2,6 +2,8 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui';
 
+import 'staff_dewarp.dart';
+
 /// 4 点対応からホモグラフィ (3x3 射影変換) を解き、
 /// 逆変換しながら矩形へ再サンプリング (台形補正) する純 Dart 実装。
 
@@ -154,6 +156,8 @@ Size outputSizeForQuad(List<Offset> corners,
 /// 台形補正本体。RGB (3ch) の出力を返す。
 /// [srcQuad] は [TL, TR, BR, BL] 順のソース画像上の座標。
 /// 範囲外の画素は白で埋める。
+/// [dewarp] があれば、台形補正後の画像にかける湾曲補正 (縦方向の変位) を
+/// 逆写像に合成し、ソースから 1 回だけ再サンプリングする。
 Uint8List warpPerspectiveRgb({
   required Uint8List src,
   required int srcW,
@@ -162,6 +166,7 @@ Uint8List warpPerspectiveRgb({
   required List<Offset> srcQuad,
   required int outW,
   required int outH,
+  PageDewarp? dewarp,
 }) {
   final dstQuad = <Offset>[
     Offset.zero,
@@ -174,7 +179,10 @@ Uint8List warpPerspectiveRgb({
   final out = Uint8List(outW * outH * 3);
   for (int y = 0; y < outH; y++) {
     for (int x = 0; x < outW; x++) {
-      final p = inv.apply(Offset(x + 0.5, y + 0.5));
+      final p = dewarp == null
+          ? inv.apply(Offset(x + 0.5, y + 0.5))
+          : inv.apply(Offset(
+              x + 0.5, dewarp.sourceY((x + 0.5) / outW, (y + 0.5) / outH) * outH));
       final sx = p.dx - 0.5;
       final sy = p.dy - 0.5;
       final oi = (y * outW + x) * 3;

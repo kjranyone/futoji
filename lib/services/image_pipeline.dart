@@ -14,6 +14,7 @@ import 'auto_capture.dart';
 import 'color_quantizer.dart';
 import 'fast_decode.dart';
 import 'ort_ffi.dart';
+import 'staff_dewarp.dart';
 import 'storage.dart';
 import 'warper.dart';
 
@@ -62,6 +63,7 @@ class ImagePipeline {
     CropResult? liveFrame,
     bool reduceColors = false,
     bool aiSharpen = false,
+    bool dewarp = false,
     Map<String, int>? timings,
   }) async {
     final sw = Stopwatch()..start();
@@ -92,7 +94,7 @@ class ImagePipeline {
     lap('decode');
     final ai = aiSharpen ? await _aiArgs() : null;
     final prepared = await Isolate.run(() => _prepareScanData(
-        decoded, corners, rotationDeg, frame, reduceColors, ai));
+        decoded, corners, rotationDeg, frame, reduceColors, ai, dewarp));
     lap('isolate');
     timings?.addAll(prepared.timings);
 
@@ -142,11 +144,44 @@ Future<List<Object?>?> _aiArgs() async {
   }
 }
 
+/// 台形補正後の画像にかける湾曲補正 (五線ベース) を推定する。
+/// 検出用に幅 [StaffDewarp.workWidth] の台形補正済みグレースケールを作って推定し、
+/// 結果は正規化座標なので保存サイズの台形補正にそのまま使える。
+/// 五線が見つからない・推定が怪しいときは null (補正しない)。
+PageDewarp? estimateDewarpForQuad({
+  required Uint8List src,
+  required int srcW,
+  required int srcH,
+  required int numCh,
+  required List<Offset> srcQuad,
+  required int outW,
+  required int outH,
+}) {
+  const w = StaffDewarp.workWidth;
+  final h = math.max(16, (outH * w / outW).round());
+  final rgb = warpPerspectiveRgb(
+    src: src,
+    srcW: srcW,
+    srcH: srcH,
+    numCh: numCh,
+    srcQuad: srcQuad,
+    outW: w,
+    outH: h,
+  );
+  final gray = Uint8List(w * h);
+  for (int i = 0; i < w * h; i++) {
+    gray[i] = (0.299 * rgb[i * 3] + 0.587 * rgb[i * 3 + 1] + 0.114 * rgb[i * 3 + 2])
+        .round();
+  }
+  return StaffDewarp.estimate(gray, w, h);
+}
+
 /// isolate 上で実行する重い前処理 (回転→台形補正→BMP化)。
 /// [decoded] は正立・長辺 [_saveCap] 以下にデコード済みの画像。
 /// クロージャ経由で this を送らないよう top-level 関数にしてある。
 _Prepared _prepareScanData(img.Image decoded, List<List<double>> corners,
-    int rotationDeg, List<Object?>? frame, bool reduceColors, List<Object?>? ai) {
+    int rotationDeg, List<Object?>? frame, bool reduceColors, List<Object?>? ai,
+    bool dewarp) {
     final timings = <String, int>{};
     final sw = Stopwatch()..start();
     void lap(String name) {
@@ -190,14 +225,35 @@ _Prepared _prepareScanData(img.Image decoded, List<List<double>> corners,
     final outW = size.width.round();
     final outH = size.height.round();
 
+    final srcBytes = im.getBytes();
+    // 曲がり補正 (設定で ON のとき)。失敗しても台形補正だけで保存を続ける
+    PageDewarp? field;
+    if (dewarp) {
+      try {
+        field = estimateDewarpForQuad(
+          src: srcBytes,
+          srcW: srcW,
+          srcH: srcH,
+          numCh: im.numChannels,
+          srcQuad: quad,
+          outW: outW,
+          outH: outH,
+        );
+      } catch (e) {
+        debugPrint('StaffDewarp: failed ($e)');
+      }
+      lap(field == null ? 'dewarp_none' : 'dewarp');
+    }
+
     var warpedBytes = warpPerspectiveRgb(
-      src: im.getBytes(),
+      src: srcBytes,
       srcW: srcW,
       srcH: srcH,
       numCh: im.numChannels,
       srcQuad: quad,
       outW: outW,
       outH: outH,
+      dewarp: field,
     );
     lap('warp');
 

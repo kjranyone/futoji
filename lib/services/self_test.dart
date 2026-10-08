@@ -191,6 +191,8 @@ class SelfTest {
           cornersNormalized: crop ?? _fullFrame,
           rotationDeg: 0,
           pageId: tmpPageId,
+          // アプリの既定 (曲がり補正 ON) と同じ経路で測る
+          dewarp: true,
           timings: saveTimings,
         );
         if (crop != null) {

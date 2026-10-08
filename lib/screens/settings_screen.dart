@@ -291,6 +291,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               value: context.watch<AppState>().aiSharpen,
               onChanged: (v) => context.read<AppState>().setAiSharpen(v),
             ),
+            SwitchListTile(
+              secondary: const Icon(Icons.straighten),
+              title: const Text('曲がり補正'),
+              subtitle: const Text('楽譜の五線を手がかりに、本のノド付近などの紙面の反りを'
+                  'まっすぐにして保存します。五線が見つからないページはそのまま保存します'),
+              value: context.watch<AppState>().dewarp,
+              onChanged: (v) => context.read<AppState>().setDewarp(v),
+            ),
             const Divider(),
             ListTile(
               leading: const Icon(Icons.info_outline),
