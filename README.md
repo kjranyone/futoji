@@ -123,6 +123,9 @@ flutter build apk --release --split-per-abi
 # => app-arm64-v8a-release.apk など (~20MB/ABI)
 ```
 
+GitHub Actions (`.github/workflows/android.yml`) でも同じ APK を作れる。main への push で Artifacts に、
+`v*` タグの push で GitHub Release に添付される (署名の Secrets など詳細は [docs/RELEASE.md](docs/RELEASE.md))。
+
 - 必要環境: Android SDK (cmdline-tools 含む) + `flutter doctor --android-licenses` の承認
 - リリース APK は既定でデバッグ鍵で署名される (配布用に署名設定を作る場合は `android/app/build.gradle.kts` を編集)
 - ツールチェーン構成 (2026-09 実績): **AGP 9.3.3 / Gradle 9.5.0 / compileSdk 37**

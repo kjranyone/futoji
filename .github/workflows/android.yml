@@ -1,0 +1,127 @@
+# Android の APK を GitHub Actions でビルドする (野良配布・動作確認用)。
+#
+# - main への push / PR / 手動実行: 解析とテストを回し、APK を Artifacts に置く (14 日で消える)
+# - v で始まるタグの push (例 v1.0.0): 同じ APK を GitHub Release に添付する
+#
+# 署名: Secrets に ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_PASSWORD
+# があればアップロード鍵で署名する。無いとき (fork など) はその場で作った使い捨ての鍵で署名する
+# (インストールはできるが、ビルドごとに署名が変わるので上書き更新はできない)。
+# 手順と注意点は docs/RELEASE.md の「GitHub Actions での APK ビルド」。
+name: Android APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: 3.47.5
+
+jobs:
+  test:
+    name: 解析とテスト
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      # 評価ハーネス (training_data が要る) と ORT を使うテストは、データや DLL が無ければ自分でスキップする
+      - run: flutter test
+
+  apk:
+    name: APK ビルド
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # タグのときに Release へ添付する
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # compileSdk 37 を使う。SDK 側のパッケージ名は android-37.0 だが AGP は platforms/android-37 を
+      # 探すので、無ければコピーして用意する (README の「ツールチェーン構成」と同じ対処)
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-37.0 build-tools;36.0.0 platform-tools'
+      - name: platforms/android-37 を用意
+        run: |
+          P="$ANDROID_HOME/platforms"
+          if [ ! -d "$P/android-37" ]; then
+            if [ -d "$P/android-37.0" ]; then cp -r "$P/android-37.0" "$P/android-37"; else
+              echo "platforms/android-37.0 が無い"; ls "$P"; exit 1; fi
+          fi
+
+      - name: 署名の設定
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -eu
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > android/upload-keystore.jks
+            echo "signing=upload-key" >> "$GITHUB_OUTPUT"
+            echo "アップロード鍵で署名します"
+          else
+            KEYSTORE_PASSWORD=ci-throwaway
+            KEY_PASSWORD=ci-throwaway
+            keytool -genkeypair -v -keystore android/upload-keystore.jks -alias upload \
+              -keyalg RSA -keysize 2048 -validity 30 -storepass "$KEYSTORE_PASSWORD" \
+              -keypass "$KEY_PASSWORD" -dname "CN=Futoji CI throwaway" >/dev/null 2>&1
+            echo "signing=throwaway" >> "$GITHUB_OUTPUT"
+            echo "::warning::署名用の Secrets が無いので使い捨ての鍵で署名します (上書き更新はできません)"
+          fi
+          cat > android/key.properties <<EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=upload
+          storeFile=upload-keystore.jks
+          EOF
+        id: signing
+
+      - run: flutter pub get
+
+      - name: ビルド (ABI ごとに分割)
+        run: flutter build apk --release --split-per-abi
+
+      - name: ファイル名を整える
+        id: name
+        run: |
+          set -eu
+          VERSION=$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' pubspec.yaml | tr '+' '_')
+          mkdir -p dist
+          for f in build/app/outputs/flutter-apk/app-*-release.apk; do
+            abi=$(basename "$f" | sed -E 's/^app-(.*)-release\.apk$/\1/')
+            cp "$f" "dist/futoji-${VERSION}-${abi}.apk"
+          done
+          ls -la dist
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: futoji-apk-${{ steps.name.outputs.version }}-${{ steps.signing.outputs.signing }}
+          path: dist/*.apk
+          retention-days: 14
+
+      - name: Release に添付 (タグのとき)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
+          generate_release_notes: true

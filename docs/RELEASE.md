@@ -78,6 +78,27 @@ python tools/make_store_images.py --shots shots --pages build/store_samples/page
   (`camera_composite` / `crop_composite`)。合成結果は `build/store_screens/` で確認できる
 - 撮り終えたら端末のサンプル教材 (promo_*) を消す (ホームで長押し → 削除)
 
+### GitHub Actions での APK ビルド (野良配布・動作確認用)
+
+`.github/workflows/android.yml` が、main への push / PR / 手動実行で解析・テストと
+APK のビルドを回す (Artifacts に 14 日間)。`v` で始まるタグを push すると同じ APK を
+GitHub Release に添付する。
+
+```powershell
+git tag v1.0.0 && git push origin v1.0.0     # → Release に futoji-1.0.0_3000-<abi>.apk が付く
+gh run list --workflow android.yml           # 進み具合
+```
+
+- 署名はリポジトリの Secrets から読む: `ANDROID_KEYSTORE_BASE64` (アップロード鍵の jks を base64 にしたもの)、
+  `ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_PASSWORD` (alias は `upload` 固定)。
+  鍵を更新したら `base64 -w0 ~/.keystores/futoji-upload.jks | gh secret set ANDROID_KEYSTORE_BASE64`
+- Secrets が無い環境 (fork など) では使い捨ての鍵で署名する。インストールはできるが、ビルドごとに
+  署名が変わるので上書き更新はできない (Artifacts の名前に `throwaway` と付く)
+- Play 公開後は Play 側が別の鍵 (アプリ署名鍵) で再署名するため、ここで作った APK と Play 版は
+  相互に上書きインストールできない。テスター配布用と割り切る
+- compileSdk 37 の SDK パッケージ名は `platforms;android-37.0` だが AGP は `platforms/android-37` を
+  探すので、ワークフロー内でコピーして用意している (ローカルと同じ対処)
+
 ### Play Console のデータ安全性 (回答の根拠)
 
 - データの収集: **なし** (通信を行わず、開発者のサーバーもない。AndroidManifest に INTERNET 権限なし)
