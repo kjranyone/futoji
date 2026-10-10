@@ -3,6 +3,26 @@
 音楽教室の紙資料 (楽譜・プリント・レッスンノートなど) をスマホでスキャンして、
 1冊の「デジタル教材」として管理する Flutter アプリです。
 
+<p align="center"><img src="docs/images/store_feature.webp" width="640" alt="MusicBook: 楽譜・プリントを 1 冊のデジタル教材に"></p>
+
+## スクリーンショット
+
+<p align="center">
+  <img src="docs/images/store_01_camera.webp" width="180" alt="かざすだけで楽譜を取り込み">
+  <img src="docs/images/store_02_crop.webp" width="180" alt="四隅はあとから指でぴったり">
+  <img src="docs/images/store_03_warp.webp" width="180" alt="斜めから撮ってもまっすぐに">
+  <img src="docs/images/store_04_home.webp" width="180" alt="教材ごとに 1 冊にまとめる">
+</p>
+<p align="center">
+  <img src="docs/images/store_05_draw.webp" width="180" alt="楽譜の上にそのまま書き込む">
+  <img src="docs/images/store_06_pdf.webp" width="180" alt="PDF にしてそのまま共有">
+  <img src="docs/images/store_07_backup.webp" width="180" alt="クラウド不要、すべて端末の中に">
+</p>
+
+ストア提出用の元画像 (Google Play スマホ / タブレット、App Store iPhone / iPad、宣伝用画像) は
+[docs/store/](docs/store/) にある。楽譜は `training_data/paper_photos/` の生成写真で、
+作り方は [docs/RELEASE.md](docs/RELEASE.md) の「ストア掲載画像」。
+
 ## 機能
 
 | 機能 | 内容 |

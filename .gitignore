@@ -53,3 +53,7 @@ app.*.map.json
 __pycache__/
 /tools/ort/
 /tools/.venv/
+
+# ストア掲載画像のうち iOS 向け (大きい。tools/make_store_images.py で再生成できる)
+/docs/store/iphone/
+/docs/store/ipad/

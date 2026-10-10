@@ -41,6 +41,43 @@ flutter build appbundle --release --target-platform android-arm64   # Play 提�
       (2026-10-04 HiPad で Download 経由を確認済み。Drive アプリの無い端末だったため Drive は未確認)
 - [ ] プライバシーポリシー ([PRIVACY_POLICY.md](PRIVACY_POLICY.md)) を公開 URL に置き、Play Console に登録
 
+### ストア掲載画像
+
+`docs/store/` に提出用の画像がある (JPEG 品質 95。README には幅 540 の WebP を載せている)。
+
+| フォルダ | サイズ | 用途 |
+|---|---|---|
+| `phone/01..07` | 1080×1920 | Google Play スマホ用スクリーンショット (9:16、2〜8 枚) |
+| `tablet/01..05` | 1620×2880 | Google Play 10 インチタブレット用 |
+| `iphone/01..07` | 1290×2796 | App Store 6.7 インチ (git 管理外。下の手順で再生成) |
+| `ipad/01..05` | 2048×2732 | App Store 12.9 インチ (同上) |
+| `feature_graphic.png` | 1024×500 | Google Play の宣伝用画像 (必須) |
+
+楽譜の写真は `training_data/paper_photos/images/` の生成画像 (imagegen で作ったもので、
+権利関係の心配がない) を使っている。実写の教師データ (train_real / eval_*) には市販の楽譜が
+写っているので、ストア画像には使わない。
+
+作り直す手順 (実機は HiPad 1600×2560 / 320dpi):
+
+```powershell
+python tools/make_store_samples.py      # 生成写真を台形補正してサンプル教材の zip を作る (build/store_samples)
+adb push build/store_samples/MusicBook_backup_promo.zip /sdcard/Download/
+# アプリ: 設定 → バックアップから復元 → ファイルを選ぶ → Download の zip
+#   (一覧に出ないときは picker の検索で "MusicBook")。既存の教材はそのまま残る
+# タブレットの画面を撮る: home / doc / viewer / draw / camera (自動 ON) / crop
+adb exec-out screencap -p > shots/home_promo2.png   # ファイル名は tools/make_store_images.py の SHOTS
+# スマホ向けは表示サイズを変えて撮る (アプリが 2 列レイアウトになる)
+adb shell wm size 1080x2340; adb shell wm density 440
+adb exec-out screencap -p > shots/p_home.png        # ... p_ で始まる各画面
+adb shell wm size reset; adb shell wm density reset
+python tools/make_store_images.py --shots shots --pages build/store_samples/pages
+```
+
+- カメラ・切り抜き画面は、実機のカメラの前に楽譜を置けないので、UI だけ実機のキャプチャを使い、
+  プレビュー部分を生成写真に差し替えてアプリと同じ描き方で検出枠を描いている
+  (`camera_composite` / `crop_composite`)。合成結果は `build/store_screens/` で確認できる
+- 撮り終えたら端末のサンプル教材 (promo_*) を消す (ホームで長押し → 削除)
+
 ### Play Console のデータ安全性 (回答の根拠)
 
 - データの収集: **なし** (通信を行わず、開発者のサーバーもない。AndroidManifest に INTERNET 権限なし)
