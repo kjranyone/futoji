@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:provider/provider.dart';
 
 import '../models/music_document.dart';
@@ -11,6 +12,7 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/dialogs.dart';
 import '../widgets/edge_swipe_back.dart';
+import '../widgets/image_fade_in.dart';
 import '../widgets/pdf_actions.dart';
 
 /// ページ一覧。ブック一覧・ページ一覧・ビューアは黒背景で揃える。
@@ -204,6 +206,9 @@ class _DocumentScreenState extends State<_DocumentView> {
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
             itemCount: list.length,
             onReorderItem: _moveInReorder,
+            // 持ち上げたとき・置いたときに軽く振動して、つまめたことを指で分かるようにする
+            onReorderStart: (_) => HapticFeedback.selectionClick(),
+            onReorderEnd: (_) => HapticFeedback.lightImpact(),
             itemBuilder: (context, i) {
               final p = list[i];
               final moved = p.index != i;
@@ -224,6 +229,7 @@ class _DocumentScreenState extends State<_DocumentView> {
                               File(p.thumbPath),
                               fit: BoxFit.cover,
                               cacheWidth: 160,
+                              frameBuilder: fadeInImageFrame,
                               errorBuilder: (_, _, _) => Container(
                                 color: theme.colorScheme.surfaceContainerHighest,
                                 child: const Icon(Icons.broken_image_outlined),
@@ -390,7 +396,9 @@ class _DocumentScreenState extends State<_DocumentView> {
       );
 
   PreferredSizeWidget _buildAppBar(AppState app, ThemeData theme) => AppBar(
-        title: GestureDetector(
+        // タイトルは押せる (名前の変更)。InkWell にして押した反応を見せる
+        title: InkWell(
+          borderRadius: BorderRadius.circular(8),
           onTap: () async {
             final newTitle =
                 await showRenameDialog(context, widget.document.title);
@@ -398,20 +406,23 @@ class _DocumentScreenState extends State<_DocumentView> {
               await app.renameDocument(widget.document, newTitle);
             }
           },
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Flexible(
-                child: Text(
-                  widget.document.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Flexible(
+                  child: Text(
+                    widget.document.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.edit_outlined,
-                  size: 16, color: theme.colorScheme.onSurfaceVariant),
-            ],
+                const SizedBox(width: 4),
+                Icon(Icons.edit_outlined,
+                    size: 16, color: theme.colorScheme.onSurfaceVariant),
+              ],
+            ),
           ),
         ),
         actions: <Widget>[
@@ -501,6 +512,7 @@ class _PageTile extends StatelessWidget {
               File(page.thumbPath),
               fit: BoxFit.cover,
               cacheWidth: 380,
+              frameBuilder: fadeInImageFrame,
               errorBuilder: (_, _, _) => Container(
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 child: const Center(child: Icon(Icons.broken_image_outlined)),

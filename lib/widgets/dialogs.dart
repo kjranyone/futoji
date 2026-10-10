@@ -115,8 +115,15 @@ Future<bool> showConfirmDialog(
   return result ?? false;
 }
 
-void showSnackBar(BuildContext context, String message) {
+/// [bottomMargin] を渡すと画面の下から浮かせて出す
+/// (カメラのシャッターなど、下にある操作に被せたくない画面用)。
+void showSnackBar(BuildContext context, String message, {double? bottomMargin}) {
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text(message), duration: const Duration(seconds: 2)));
+    ..showSnackBar(SnackBar(
+      content: Text(message),
+      duration: const Duration(seconds: 2),
+      behavior: bottomMargin == null ? null : SnackBarBehavior.floating,
+      margin: bottomMargin == null ? null : EdgeInsets.fromLTRB(16, 0, 16, bottomMargin),
+    ));
 }

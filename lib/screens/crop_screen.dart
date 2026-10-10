@@ -3,7 +3,9 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
+import 'package:flutter/gestures.dart' show DeviceGestureSettings;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:image/image.dart' as img;
 
 import '../models/crop_result.dart';
@@ -43,6 +45,9 @@ class _CropScreenState extends State<CropScreen> {
   bool _autoDetected = false;
   bool _loading = true;
   String? _error;
+
+  /// いまドラッグしているハンドル (大きく表示する)。
+  int? _dragging;
 
   static List<Offset> _defaultCorners() => const <Offset>[
         Offset(0.04, 0.06),
@@ -181,44 +186,51 @@ class _CropScreenState extends State<CropScreen> {
         ),
       );
     }
-    if (_loading || _display == null) {
+    final display = _display;
+    if (display == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    return SafeArea(
+    final body = SafeArea(
       child: Column(
         children: <Widget>[
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final container = constraints.biggest;
-                  final rect = containRect(container, _aspect);
-                  return Stack(
-                    children: <Widget>[
-                      Positioned.fromRect(
-                        rect: rect,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: Image.memory(_display!,
-                              fit: BoxFit.fill, gaplessPlayback: true),
-                        ),
-                      ),
-                      Positioned.fromRect(
-                        rect: rect,
-                        child: IgnorePointer(
-                          child: CustomPaint(
-                            size: rect.size,
-                            painter: CornerOverlayPainter(
-                                corners: _corners, rect: Offset.zero & rect.size),
+              // ハンドルは動かし始めの閾値を小さくして、触れたらすぐ付いてくるようにする
+              // (この画面には横スクロールなど競合する操作がない)
+              child: MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                    gestureSettings: const DeviceGestureSettings(touchSlop: 8)),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final container = constraints.biggest;
+                    final rect = containRect(container, _aspect);
+                    return Stack(
+                      children: <Widget>[
+                        Positioned.fromRect(
+                          rect: rect,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: Image.memory(display,
+                                fit: BoxFit.fill, gaplessPlayback: true),
                           ),
                         ),
-                      ),
-                      for (int i = 0; i < 4; i++)
-                        _cornerHandle(i, rect),
-                    ],
-                  );
-                },
+                        Positioned.fromRect(
+                          rect: rect,
+                          child: IgnorePointer(
+                            child: CustomPaint(
+                              size: rect.size,
+                              painter: CornerOverlayPainter(
+                                  corners: _corners, rect: Offset.zero & rect.size),
+                            ),
+                          ),
+                        ),
+                        for (int i = 0; i < 4; i++)
+                          _cornerHandle(i, rect),
+                      ],
+                    );
+                  },
+                ),
               ),
             ),
           ),
@@ -244,12 +256,26 @@ class _CropScreenState extends State<CropScreen> {
         ],
       ),
     );
+    // 回転・再検出の間は、いまの画像を残したまま薄暗くして待つ
+    // (真っ暗な画面に戻ってから出直すとちらついて見える)
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        IgnorePointer(ignoring: _loading, child: body),
+        if (_loading)
+          const ColoredBox(
+            color: Colors.black38,
+            child: Center(child: CircularProgressIndicator()),
+          ),
+      ],
+    );
   }
 
   Widget _cornerHandle(int index, Rect rect) {
     final c = _corners[index];
     final pos = Offset(rect.left + c.dx * rect.width,
         rect.top + c.dy * rect.height);
+    final active = _dragging == index;
     return Positioned(
       left: pos.dx - 22,
       top: pos.dy - 22,
@@ -261,21 +287,33 @@ class _CropScreenState extends State<CropScreen> {
             (pos.dy + details.delta.dy - rect.top) / rect.height,
           ));
         },
-        onPanStart: (_) => _moveCorner(index, c),
+        // つまんだときに軽く振動し、指の下で見えるようハンドルを大きくする
+        onPanStart: (_) {
+          HapticFeedback.selectionClick();
+          setState(() => _dragging = index);
+          _moveCorner(index, c);
+        },
+        onPanEnd: (_) => setState(() => _dragging = null),
+        onPanCancel: () => setState(() => _dragging = null),
         child: Container(
           width: 44,
           height: 44,
           alignment: Alignment.center,
-          child: Container(
-            width: 26,
-            height: 26,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.white.withValues(alpha: 0.9),
-              border: Border.all(color: const Color(0xFF3B4A9F), width: 3),
-              boxShadow: const <BoxShadow>[
-                BoxShadow(color: Colors.black38, blurRadius: 4),
-              ],
+          child: AnimatedScale(
+            scale: active ? 1.3 : 1,
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
+            child: Container(
+              width: 26,
+              height: 26,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: active ? 1 : 0.9),
+                border: Border.all(color: const Color(0xFF3B4A9F), width: 3),
+                boxShadow: const <BoxShadow>[
+                  BoxShadow(color: Colors.black38, blurRadius: 4),
+                ],
+              ),
             ),
           ),
         ),

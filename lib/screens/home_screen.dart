@@ -13,6 +13,7 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../utils.dart';
 import '../widgets/dialogs.dart';
+import '../widgets/image_fade_in.dart';
 
 /// ブック一覧。ブック一覧・ページ一覧・ビューアは黒背景で揃える。
 /// テーマは画面の外側に置く (内側だと、ここから開くダイアログやメニューに届かない)。
@@ -244,6 +245,7 @@ class _DocumentCard extends StatelessWidget {
                       File(cover),
                       fit: BoxFit.cover,
                       cacheWidth: 420,
+                      frameBuilder: fadeInImageFrame,
                       errorBuilder: (_, _, _) => const _CoverPlaceholder(),
                     )
                   : const _CoverPlaceholder(),

@@ -59,6 +59,16 @@ void main() {
     expect(tapZoneOf(0.9), TapZone.next);
   });
 
+  Future<void> openViewer(WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(600, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(ChangeNotifierProvider<AppState>.value(
+      value: app,
+      child: MaterialApp(home: ViewerScreen(document: doc, initialIndex: 0)),
+    ));
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('右タップで次、左タップで前のページ、中央タップでバーの表示を切り替える',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(600, 900));
@@ -82,28 +92,76 @@ void main() {
     await tapAt(0.9);
     expect(find.text('3 / 3'), findsOneWidget);
     await tapAt(0.9);
+    // 端の知らせは SnackBar ではなく、ページの上の小さな吹き出し (すぐ消える)
     expect(find.text('最後のページです'), findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
     expect(find.text('3 / 3'), findsOneWidget);
 
     await tapAt(0.1);
     expect(find.text('2 / 3'), findsOneWidget);
 
-    // 中央: バーを隠す → もう一度で戻す
+    // 中央: バーを隠す → もう一度で戻す。
+    // バーは消えるのではなく上へ滑り出て (タッチも通さない)、ページはバーの分だけ広がる
+    Offset chromeOffset() => tester
+        .widget<AnimatedSlide>(find.byKey(const ValueKey<String>('viewer-chrome')))
+        .offset;
+    double pageTop() => tester.getTopLeft(find.byType(InteractiveViewer).first).dy;
+    expect(chromeOffset(), Offset.zero);
+    expect(pageTop(), kToolbarHeight, reason: 'バーを出している間はページをその下に収める');
+
     await tapAt(0.5);
-    expect(find.byType(AppBar), findsNothing);
+    expect(chromeOffset(), const Offset(0, -1));
+    expect(find.byType(AppBar), findsOneWidget, reason: '隠している間も (見えない所に) 残す');
+    expect(pageTop(), 0, reason: 'バーを隠すとページが画面の上端まで広がる');
+    final ignoring = tester.widget<IgnorePointer>(find
+        .ancestor(of: find.byType(AppBar), matching: find.byType(IgnorePointer))
+        .first);
+    expect(ignoring.ignoring, isTrue, reason: '隠れているバーはタッチを受けない');
+
     await tapAt(0.5);
+    expect(chromeOffset(), Offset.zero);
+    expect(pageTop(), kToolbarHeight);
     expect(find.text('2 / 3'), findsOneWidget);
   });
 
-  Future<void> openViewer(WidgetTester tester) async {
-    await tester.binding.setSurfaceSize(const Size(600, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(ChangeNotifierProvider<AppState>.value(
-      value: app,
-      child: MaterialApp(home: ViewerScreen(document: doc, initialIndex: 0)),
-    ));
+  testWidgets('タップするとダブルタップの判定を待たずにすぐめくり始める', (tester) async {
+    await openViewer(tester);
+    await tester.tapAt(const Offset(540, 450));
+    // ダブルタップの猶予 (300ms) より短い時間で、もうページが動いている
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('2 / 3'), findsOneWidget,
+        reason: 'タップ後 160ms でページ送りのアニメーションが半分を過ぎている');
     await tester.pumpAndSettle();
-  }
+  });
+
+  testWidgets('手書きの線は指が触れた点から始まる (動き出しを待った位置からではない)',
+      (tester) async {
+    await openViewer(tester);
+    await tester.tap(find.text('手書き'));
+    await tester.pumpAndSettle();
+
+    // ページの中央 (= 正規化座標 (0.5, 0.5)) に触れてから右へ引く
+    final center = tester.getCenter(find.byType(InteractiveViewer).first);
+    final g = await tester.startGesture(center);
+    for (int i = 0; i < 5; i++) {
+      await g.moveBy(const Offset(12, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    // 離すと線が Hive に保存される (実 I/O) ので、runAsync の中で実時間を進めて待つ
+    await tester.runAsync(() async {
+      await g.up();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
+    await tester.pumpAndSettle();
+
+    final strokes = app.cachedPages('doc')![0].strokes;
+    expect(strokes, hasLength(1));
+    final first = strokes.single.points.first;
+    expect(first.dx, closeTo(0.5, 0.005), reason: '始点は触れた位置 (動き出しの閾値分ずれない)');
+    expect(first.dy, closeTo(0.5, 0.005));
+    expect(strokes.single.points.last.dx, greaterThan(first.dx + 0.05));
+  });
 
   testWidgets('ゆっくり短く (幅の 25%) スワイプしてもページがめくれる', (tester) async {
     await openViewer(tester);

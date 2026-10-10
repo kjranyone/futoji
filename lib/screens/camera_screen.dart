@@ -19,6 +19,7 @@ import '../services/paper_net.dart';
 import '../state/app_state.dart';
 import '../widgets/dialogs.dart';
 import '../widgets/edge_swipe_back.dart';
+import '../widgets/press_scale.dart';
 import 'crop_screen.dart';
 
 /// 読み取り画面。
@@ -48,6 +49,13 @@ class _CameraScreenState extends State<CameraScreen>
   bool _starting = false;
   bool _busy = false; // 撮影〜保存中
   String? _error;
+
+  /// 知らせ (SnackBar) はシャッターの上に浮かせて出す (下に出すとシャッターに被る)。
+  /// シャッターの下余白 24 + リング 90 に、端末の下のセーフエリア分の余裕を足した高さ。
+  static const double _toastBottomMargin = 24 + 90 + 24 + 16;
+
+  void _toast(String message) =>
+      showSnackBar(context, message, bottomMargin: _toastBottomMargin);
 
   // ---- ライブ検出 ----
   final DetectionWorker _worker = DetectionWorker();
@@ -290,6 +298,8 @@ class _CameraScreenState extends State<CameraScreen>
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(
         duration: const Duration(seconds: 6),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, _toastBottomMargin),
         content: const Text('同じ紙を続けて撮影しそうなので、自動撮影を止めました。'
             '次の紙に入れ替えてから再開してください'),
         action: SnackBarAction(label: '再開', onPressed: _toggleAutoMode),
@@ -297,13 +307,14 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   void _toggleAutoMode() {
+    HapticFeedback.selectionClick();
     setState(() {
       _autoMode = !_autoMode;
       _auto.reset();
     });
     _live.value = LiveOverlay(corners: _live.value.corners);
     if (_autoMode) {
-      showSnackBar(context, '自動撮影モード: 紙をかざすと自動で取り込みます');
+      _toast('自動撮影モード: 紙をかざすと自動で取り込みます');
     }
   }
 
@@ -311,8 +322,7 @@ class _CameraScreenState extends State<CameraScreen>
     final app = context.read<AppState>();
     await app.setAiSharpen(!app.aiSharpen);
     if (!mounted) return;
-    showSnackBar(
-      context,
+    _toast(
       app.aiSharpen
           ? 'AI でくっきりオン: 保存のたびに 10 秒ほど仕上げます'
           : 'AI でくっきりオフ: すぐに保存します',
@@ -323,8 +333,7 @@ class _CameraScreenState extends State<CameraScreen>
     final app = context.read<AppState>();
     await app.setDewarp(!app.dewarp);
     if (!mounted) return;
-    showSnackBar(
-      context,
+    _toast(
       app.dewarp
           ? '曲がり補正オン: 五線を手がかりに紙面の反りをまっすぐにします'
           : '曲がり補正オフ: 台形補正だけで保存します',
@@ -411,12 +420,12 @@ class _CameraScreenState extends State<CameraScreen>
           } catch (_) {}
           // 同じ誤検出位置で連続発火しないよう現在のライブ枠を記録しておく
           _auto.noteManualCapture(_live.value.corners, DateTime.now());
-          if (mounted) showSnackBar(context, '紙面を検出できませんでした');
+          if (mounted) _toast('紙面を検出できませんでした');
           return;
         }
         await _savePage(app, raw.path, CropResult(corners: corners, rotation: 0));
         if (mounted) {
-          showSnackBar(context, '${widget.document.pageCount}ページ目を自動保存しました');
+          _toast('${widget.document.pageCount}ページ目を自動保存しました');
         }
       } else {
         if (!mounted) return;
@@ -429,7 +438,7 @@ class _CameraScreenState extends State<CameraScreen>
           final app = context.read<AppState>();
           await _savePage(app, raw.path, result);
           if (mounted) {
-            showSnackBar(context, '${widget.document.pageCount}ページ目を保存しました');
+            _toast('${widget.document.pageCount}ページ目を保存しました');
           }
         }
         // 手動撮影で位置が決まったら自動再武装の基準も更新
@@ -441,7 +450,7 @@ class _CameraScreenState extends State<CameraScreen>
         await File(raw.path).delete();
       } catch (_) {}
     } catch (e) {
-      if (mounted) showSnackBar(context, '保存に失敗しました: $e');
+      if (mounted) _toast('保存に失敗しました: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -585,38 +594,41 @@ class _CameraScreenState extends State<CameraScreen>
                       color: Colors.white, fontWeight: FontWeight.w600),
                 ),
               ),
-              // 自動撮影トグル
-              GestureDetector(
-                onTap: _busy ? null : _toggleAutoMode,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: _autoMode ? const Color(0xFF4CAF50) : Colors.black38,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: _autoMode ? Colors.white : Colors.white38,
-                      width: 1.2,
-                    ),
+              // 自動撮影トグル (Material にしてインクが見えるように。色の切り替えも滑らかに)
+              Material(
+                color: _autoMode ? const Color(0xFF4CAF50) : Colors.black38,
+                shape: StadiumBorder(
+                  side: BorderSide(
+                    color: _autoMode ? Colors.white : Colors.white38,
+                    width: 1.2,
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Icon(
-                        Icons.burst_mode,
-                        size: 16,
-                        color: _autoMode ? Colors.white : Colors.white70,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '自動',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                ),
+                animationDuration: const Duration(milliseconds: 150),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: _busy ? null : _toggleAutoMode,
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Icon(
+                          Icons.burst_mode,
+                          size: 16,
                           color: _autoMode ? Colors.white : Colors.white70,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 4),
+                        Text(
+                          '自動',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: _autoMode ? Colors.white : Colors.white70,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -651,8 +663,7 @@ class _CameraScreenState extends State<CameraScreen>
                 onPressed: () {
                   final app = context.read<AppState>();
                   app.setReduceColors(!reduceColors);
-                  showSnackBar(
-                    context,
+                  _toast(
                     app.reduceColors
                         ? '減色オン: 色数を自動で絞って軽く保存します'
                         : '減色オフ: フルカラーで保存します',
@@ -747,8 +758,11 @@ class _CameraScreenState extends State<CameraScreen>
                             ),
                           ),
                   ),
-                  GestureDetector(
+                  // 押している間は少し沈み、離すと戻る (カメラのシャッターの手応え)
+                  PressScale(
                     onTap: _busy ? null : _capture,
+                    scale: 0.9,
+                    semanticLabel: '撮影',
                     child: Container(
                       width: 76,
                       height: 76,
