@@ -2,8 +2,7 @@
 
 音楽教室の紙資料 (楽譜・プリント・レッスンノートなど) をスマホでスキャンして、
 1冊の「デジタル教材」として管理する Flutter アプリです。
-名前は「譜 (楽譜) を綴じる」から。2026-10 に MusicBook (mymusicbook) から改名した
-(旧名のアプリが書き出したバックアップ zip も復元できる)。
+名前は「譜 (楽譜) を綴じる」から。
 
 <p align="center"><img src="docs/images/store_feature.webp" width="640" alt="Futoji: 楽譜・プリントを 1 冊のデジタル教材に"></p>
 

@@ -87,11 +87,12 @@ jobs:
             echo "signing=throwaway" >> "$GITHUB_OUTPUT"
             echo "::warning::署名用の Secrets が無いので使い捨ての鍵で署名します (上書き更新はできません)"
           fi
+          # storeFile は app モジュール基準で解決されるので絶対パスで書く
           cat > android/key.properties <<EOF
           storePassword=$KEYSTORE_PASSWORD
           keyPassword=$KEY_PASSWORD
           keyAlias=upload
-          storeFile=upload-keystore.jks
+          storeFile=$GITHUB_WORKSPACE/android/upload-keystore.jks
           EOF
         id: signing
 

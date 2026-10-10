@@ -24,9 +24,6 @@ class BackupService {
   BackupService._();
 
   static const String formatName = 'futoji-backup';
-
-  /// 改名前 (MusicBook) のアプリが書き出した zip も読めるようにする。
-  static const String legacyFormatName = 'mymusicbook-backup';
   static const int formatVersion = 1;
   static const String filePrefix = 'futoji_backup_';
 
@@ -116,7 +113,7 @@ class BackupService {
     try {
       final texts = await _runExtractZip(zipPath, staging.path);
       final manifest = _decodeObject(texts['manifest'], 'manifest.json');
-      if (manifest['format'] != formatName && manifest['format'] != legacyFormatName) {
+      if (manifest['format'] != formatName) {
         throw const FormatException('Futoji のバックアップではありません');
       }
       final version = manifest['version'];

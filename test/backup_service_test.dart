@@ -212,34 +212,6 @@ void main() {
         BackupService.restore(notZip.path), throwsA(isA<FormatException>()));
   });
 
-  test('改名前 (MusicBook) のアプリが書き出した zip も復元できる', () async {
-    await addDoc('docA', 'バイエル', 1);
-    final backup = await BackupService.export(outDir: out);
-    // 旧形式名 (mymusicbook-backup) の manifest に書き換えた zip を作る
-    final legacy = '${out.path}/legacy.zip';
-    final src = InputFileStream(backup.file.path);
-    final enc = ZipFileEncoder()..create(legacy);
-    try {
-      for (final entry in ZipDecoder().decodeStream(src)) {
-        if (!entry.isFile) continue;
-        if (entry.name == 'manifest.json') {
-          enc.addArchiveFile(ArchiveFile.string('manifest.json',
-              jsonEncode(<String, Object>{'format': BackupService.legacyFormatName, 'version': 1})));
-        } else {
-          enc.addArchiveFile(ArchiveFile.bytes(entry.name, entry.readBytes()!));
-        }
-      }
-    } finally {
-      await enc.close();
-      src.closeSync();
-    }
-    DbService.documents.get('docA')!.title = '改名後';
-
-    final r = await BackupService.restore(legacy);
-    expect(r.documentCount, 1);
-    expect(DbService.documents.get('docA')!.title, 'バイエル');
-  });
-
   test('zip 内の想定外のパス (../ など) は展開しない', () async {
     final path = '${out.path}/evil.zip';
     final enc = ZipFileEncoder()..create(path);
