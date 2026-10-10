@@ -3,8 +3,8 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 /// 画像ファイルの保存先管理。
-///   `<アプリ領域>/musicbook/images/<pageId>.webp` 本文
-///   `<アプリ領域>/musicbook/thumbs/<pageId>.webp` サムネイル
+///   `<アプリ領域>/futoji/images/<pageId>.webp` 本文
+///   `<アプリ領域>/futoji/thumbs/<pageId>.webp` サムネイル
 class AppPaths {
   AppPaths._();
 
@@ -13,7 +13,7 @@ class AppPaths {
 
   static Future<void> init() async {
     final docs = await getApplicationDocumentsDirectory();
-    final root = '${docs.path}${Platform.pathSeparator}musicbook';
+    final root = '${docs.path}${Platform.pathSeparator}futoji';
     imagesDir = '$root${Platform.pathSeparator}images';
     thumbsDir = '$root${Platform.pathSeparator}thumbs';
     await Directory(imagesDir).create(recursive: true);

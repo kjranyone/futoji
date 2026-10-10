@@ -3,8 +3,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mymusicbook/widgets/dialogs.dart';
-import 'package:mymusicbook/widgets/press_scale.dart';
+import 'package:futoji/widgets/dialogs.dart';
+import 'package:futoji/widgets/press_scale.dart';
 
 void main() {
   testWidgets('押している間は縮み、離すと戻って onTap と振動が 1 回ずつ', (tester) async {

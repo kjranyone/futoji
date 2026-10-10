@@ -4,13 +4,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
-import 'package:mymusicbook/models/adapters.dart';
-import 'package:mymusicbook/models/music_document.dart';
-import 'package:mymusicbook/models/music_page.dart';
-import 'package:mymusicbook/screens/document_screen.dart';
-import 'package:mymusicbook/screens/home_screen.dart';
-import 'package:mymusicbook/services/db_service.dart';
-import 'package:mymusicbook/state/app_state.dart';
+import 'package:futoji/models/adapters.dart';
+import 'package:futoji/models/music_document.dart';
+import 'package:futoji/models/music_page.dart';
+import 'package:futoji/screens/document_screen.dart';
+import 'package:futoji/screens/home_screen.dart';
+import 'package:futoji/services/db_service.dart';
+import 'package:futoji/state/app_state.dart';
 import 'package:provider/provider.dart';
 
 void main() {
@@ -24,7 +24,7 @@ void main() {
   });
 
   setUp(() async {
-    tmp = await Directory.systemTemp.createTemp('mmb_reorder_test');
+    tmp = await Directory.systemTemp.createTemp('futoji_reorder_test');
     Hive.init(tmp.path);
     await Hive.openBox<MusicDocument>('documents');
     await Hive.openBox<MusicPage>('pages');

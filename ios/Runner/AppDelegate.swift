@@ -21,7 +21,7 @@ import UIKit
   private func registerOrtBridge(_ registry: FlutterPluginRegistry) {
     guard let registrar = registry.registrar(forPlugin: "OrtBridge") else { return }
     let channel = FlutterMethodChannel(
-      name: "mymusicbook/ort", binaryMessenger: registrar.messenger())
+      name: "futoji/ort", binaryMessenger: registrar.messenger())
     channel.setMethodCallHandler { call, result in
       guard call.method == "apiBase" else {
         result(FlutterMethodNotImplemented)

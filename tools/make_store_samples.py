@@ -1,13 +1,13 @@
 """ストア掲載画像の撮影用に、生成楽譜写真 (training_data/paper_photos) からサンプル教材を
-MusicBook のバックアップ zip として作る。
+Futoji のバックアップ zip として作る。
 
 - 四隅ラベル (quads.json, ok=true) で台形補正した画像をページ本文 (WebP) にする
   (アプリの warper と同じく、出力サイズは向かい合う辺の平均長)
 - サムネイルは長辺 420px
 - 一部のページには手書き (赤丸・青の波線) を入れる
 
-出力: build/store_samples/MusicBook_backup_promo.zip と pages/<pageId>_<photoId>.png (補正後ページ)
-端末へ:  adb push build/store_samples/MusicBook_backup_promo.zip /sdcard/Download/
+出力: build/store_samples/futoji_backup_promo.zip と pages/<pageId>_<photoId>.png (補正後ページ)
+端末へ:  adb push build/store_samples/futoji_backup_promo.zip /sdcard/Download/
          → アプリの 設定 → バックアップから復元 で読み込む (私物の教材はそのまま残る)。
 撮り終えたら端末の教材を消す (ホームで長押し → 削除)。
 """
@@ -116,9 +116,9 @@ def main() -> None:
                                "strokes": strokes.get(pi, [])})
             print(f"{doc_id} p{pi + 1} <- {img_id}  {w}x{h}")
 
-    manifest = {"format": "mymusicbook-backup", "version": 1, "createdAt": now,
+    manifest = {"format": "futoji-backup", "version": 1, "createdAt": now,
                 "documents": len(docs_json), "pages": len(pages_json)}
-    zip_path = OUT / "MusicBook_backup_promo.zip"
+    zip_path = OUT / "futoji_backup_promo.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as z:
         z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False))
         z.writestr("data.json", json.dumps({"documents": docs_json, "pages": pages_json},

@@ -14,7 +14,7 @@ val keystoreProperties = Properties().apply {
 val hasReleaseKey = keystoreProperties.getProperty("storeFile") != null
 
 android {
-    namespace = "com.kjranyone.mymusicbook"
+    namespace = "com.kjranyone.futoji"
     // permission_handler_android 14.x が API 37 要求のため flutter.compileSdkVersion (36) から上書き
     compileSdk = 37
     ndkVersion = flutter.ndkVersion
@@ -26,7 +26,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.kjranyone.mymusicbook"
+        applicationId = "com.kjranyone.futoji"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

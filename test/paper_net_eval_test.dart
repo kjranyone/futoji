@@ -25,10 +25,10 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
-import 'package:mymusicbook/services/detector.dart';
-import 'package:mymusicbook/services/fast_decode.dart';
-import 'package:mymusicbook/services/ort_ffi.dart';
-import 'package:mymusicbook/services/quad_label.dart';
+import 'package:futoji/services/detector.dart';
+import 'package:futoji/services/fast_decode.dart';
+import 'package:futoji/services/ort_ffi.dart';
+import 'package:futoji/services/quad_label.dart';
 
 
 /// 成功判定に使う平均角誤差のしきい値 (画像対角線比)。

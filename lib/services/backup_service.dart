@@ -23,9 +23,12 @@ import 'storage.dart';
 class BackupService {
   BackupService._();
 
-  static const String formatName = 'mymusicbook-backup';
+  static const String formatName = 'futoji-backup';
+
+  /// 改名前 (MusicBook) のアプリが書き出した zip も読めるようにする。
+  static const String legacyFormatName = 'mymusicbook-backup';
   static const int formatVersion = 1;
-  static const String filePrefix = 'MusicBook_backup_';
+  static const String filePrefix = 'futoji_backup_';
 
   /// zip 内で受け付けるページ画像の名前 (zip slip 対策で id の文字種を限定)。
   static final RegExp _pageFile = RegExp(r'^(images|thumbs)/([A-Za-z0-9_-]+)\.webp$');
@@ -113,8 +116,8 @@ class BackupService {
     try {
       final texts = await _runExtractZip(zipPath, staging.path);
       final manifest = _decodeObject(texts['manifest'], 'manifest.json');
-      if (manifest['format'] != formatName) {
-        throw const FormatException('MusicBook のバックアップではありません');
+      if (manifest['format'] != formatName && manifest['format'] != legacyFormatName) {
+        throw const FormatException('Futoji のバックアップではありません');
       }
       final version = manifest['version'];
       if (version is! int || version > formatVersion) {

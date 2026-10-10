@@ -1,10 +1,10 @@
-# MusicBook ロゴ
+# Futoji ロゴ
 
 開いた本と音符を合わせたマーク。アプリのテーマカラー（藍色 #3B4A9F）を基調にしています。
 
 | ファイル | 用途 | 仕様 |
 | --- | --- | --- |
-| musicbook-master.png | 生成元画像 | オリジナル解像度 |
+| futoji-master.png | 生成元画像 | オリジナル解像度 |
 | app-store-1024.png | App Store / iOS | 1024×1024、RGB PNG、アルファチャンネルなし |
 | google-play-512.png | Google Play | 512×512、32-bit RGBA PNG、全画素不透明、1,024 KB以下 |
 

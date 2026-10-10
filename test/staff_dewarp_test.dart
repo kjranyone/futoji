@@ -2,8 +2,8 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mymusicbook/services/staff_dewarp.dart';
-import 'package:mymusicbook/services/warper.dart';
+import 'package:futoji/services/staff_dewarp.dart';
+import 'package:futoji/services/warper.dart';
 
 const int _w = 1200;
 const int _h = 1700;

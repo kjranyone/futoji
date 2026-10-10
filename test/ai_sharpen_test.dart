@@ -6,7 +6,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
-import 'package:mymusicbook/services/ai_sharpen.dart';
+import 'package:futoji/services/ai_sharpen.dart';
 
 /// 楽譜もどき (横線 5 本と黒い玉・縦線)。タイル境界をまたぐ大きさにする。
 img.Image sharpScore(int w, int h) {

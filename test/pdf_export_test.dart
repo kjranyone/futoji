@@ -4,8 +4,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
-import 'package:mymusicbook/models/stroke.dart';
-import 'package:mymusicbook/services/pdf_export.dart';
+import 'package:futoji/models/stroke.dart';
+import 'package:futoji/services/pdf_export.dart';
 
 void main() {
   Uint8List tinyPng(int w, int h, [int value = 128]) {
@@ -98,7 +98,7 @@ void main() {
       ),
     ]);
     final tmp = File(
-        '${Directory.systemTemp.path}${Platform.pathSeparator}mmb_pdf_test.pdf');
+        '${Directory.systemTemp.path}${Platform.pathSeparator}futoji_pdf_test.pdf');
     await tmp.writeAsBytes(bytes, flush: true);
     final first = tmp.readAsBytesSync().first;
     expect(first, 0x25); // '%'

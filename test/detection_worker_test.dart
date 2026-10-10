@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mymusicbook/services/detection_worker.dart';
+import 'package:futoji/services/detection_worker.dart';
 
 /// 暗い背景に明るい矩形 (紙) を置いた輝度画像。
 Uint8List paperGray(int w, int h) {

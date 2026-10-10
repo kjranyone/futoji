@@ -4,14 +4,14 @@
 
 ### 署名鍵 (アップロード鍵)
 
-- 鍵ストア: `%USERPROFILE%\.keystores\mymusicbook-upload.jks` (PKCS12, alias `upload`, RSA 2048, 有効期限 10000 日)
+- 鍵ストア: `%USERPROFILE%\.keystores\futoji-upload.jks` (PKCS12, alias `upload`, RSA 2048, 有効期限 10000 日)
 - 設定: `android/key.properties` (git 管理外。パスワードはここにだけある)
 
   ```properties
   storePassword=...
   keyPassword=...
   keyAlias=upload
-  storeFile=C:/Users/<you>/.keystores/mymusicbook-upload.jks
+  storeFile=C:/Users/<you>/.keystores/futoji-upload.jks
   ```
 
 - **鍵ストアと key.properties は必ず別の場所にもバックアップする** (パスワード管理ツールなど)。
@@ -61,9 +61,9 @@ flutter build appbundle --release --target-platform android-arm64   # Play 提�
 
 ```powershell
 python tools/make_store_samples.py      # 生成写真を台形補正してサンプル教材の zip を作る (build/store_samples)
-adb push build/store_samples/MusicBook_backup_promo.zip /sdcard/Download/
+adb push build/store_samples/futoji_backup_promo.zip /sdcard/Download/
 # アプリ: 設定 → バックアップから復元 → ファイルを選ぶ → Download の zip
-#   (一覧に出ないときは picker の検索で "MusicBook")。既存の教材はそのまま残る
+#   (一覧に出ないときは picker の検索で "futoji")。既存の教材はそのまま残る
 # タブレットの画面を撮る: home / doc / viewer / draw / camera (自動 ON) / crop
 adb exec-out screencap -p > shots/home_promo2.png   # ファイル名は tools/make_store_images.py の SHOTS
 # スマホ向けは表示サイズを変えて撮る (アプリが 2 列レイアウトになる)
@@ -89,7 +89,7 @@ python tools/make_store_images.py --shots shots --pages build/store_samples/page
 
 紙面検出の ONNX Runtime は CocoaPods の `onnxruntime-c` (1.20.0, Android 側と同じ版) を
 静的リンクし、`AppDelegate.swift` が `OrtGetApiBase()` のアドレスを MethodChannel
-(`mymusicbook/ort`) で Dart に渡す (`lib/services/ort_ffi.dart` の `preparePlatform`)。
+(`futoji/ort`) で Dart に渡す (`lib/services/ort_ffi.dart` の `preparePlatform`)。
 ORT が使えない場合は従来のヒューリスティック検出に自動で切り替わる。
 
 **未検証 (2026-10-04 時点)**: 実装は Windows 上で行い、iOS のビルド・実機確認はしていない。

@@ -1,7 +1,7 @@
 // 自動撮影のカウントダウン表示 (3 → 2 → 1) とライブ枠の色。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mymusicbook/screens/camera_screen.dart';
+import 'package:futoji/screens/camera_screen.dart';
 
 void main() {
   test('進み 0..1 を 3 → 2 → 1 に分ける', () {

@@ -24,7 +24,7 @@ import 'training_capture.dart';
 ///
 /// 端末のアプリ外部領域に `selftest/RUN` がある場合だけ起動時に 1 回実行する
 /// (通常の利用では何もしない)。`./dev.ps1 selftest` が画像と目印を置いて起動し、
-/// 結果 (logcat の `MMB_SELFTEST` 行と selftest/result.json) を回収する。
+/// 結果 (logcat の `FUTOJI_SELFTEST` 行と selftest/result.json) を回収する。
 ///
 /// 検証する経路:
 /// - crop: 切り抜き画面と同じ (正立 → 長辺 1000px → 輝度 → PaperNet.detectQuad, メイン isolate)
@@ -33,7 +33,7 @@ import 'training_capture.dart';
 class SelfTest {
   SelfTest._();
 
-  static const String tag = 'MMB_SELFTEST';
+  static const String tag = 'FUTOJI_SELFTEST';
   static const String _lastTokenKey = 'selftest_last_token';
   static const String _enabledKey = 'selftest_enabled';
 

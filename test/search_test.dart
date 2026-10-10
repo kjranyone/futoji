@@ -1,8 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:mymusicbook/models/music_document.dart';
-import 'package:mymusicbook/models/music_page.dart';
-import 'package:mymusicbook/services/search.dart';
+import 'package:futoji/models/music_document.dart';
+import 'package:futoji/models/music_page.dart';
+import 'package:futoji/services/search.dart';
 
 void main() {
   MusicDocument doc({

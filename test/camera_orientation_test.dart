@@ -4,8 +4,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mymusicbook/models/music_document.dart';
-import 'package:mymusicbook/screens/camera_screen.dart';
+import 'package:futoji/models/music_document.dart';
+import 'package:futoji/screens/camera_screen.dart';
 
 void main() {
   testWidgets('カメラ画面の間だけ縦向きに固定し、閉じると解除する', (tester) async {

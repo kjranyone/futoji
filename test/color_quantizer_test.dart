@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
-import 'package:mymusicbook/services/color_quantizer.dart';
+import 'package:futoji/services/color_quantizer.dart';
 
 Uint8List rgbImage(int w, int h, Uint8List Function(int x, int y) pixel) {
   final out = Uint8List(w * h * 3);

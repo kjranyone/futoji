@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Mymusicbook</string>
+	<string>Futoji</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -17,7 +17,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>教材（楽譜・プリント）をスキャンするためにカメラを使用します。</string>
 	<key>CFBundleName</key>
-	<string>mymusicbook</string>
+	<string>futoji</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

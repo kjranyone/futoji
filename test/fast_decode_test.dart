@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
-import 'package:mymusicbook/services/fast_decode.dart';
+import 'package:futoji/services/fast_decode.dart';
 
 /// 向きが分かる非対称な絵 (生ピクセル 800x600: 左上に赤、右下寄りに白) に
 /// EXIF orientation を付けた JPEG。image パッケージは EXIF を書き出さないため

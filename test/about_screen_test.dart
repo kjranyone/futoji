@@ -1,14 +1,14 @@
 // 「このアプリについて」: バージョン表示とプライバシーポリシーの全文表示。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mymusicbook/screens/about_screen.dart';
+import 'package:futoji/screens/about_screen.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 void main() {
   setUp(() {
     PackageInfo.setMockInitialValues(
-      appName: 'MusicBook',
-      packageName: 'com.kjranyone.mymusicbook',
+      appName: 'Futoji',
+      packageName: 'com.kjranyone.futoji',
       version: '1.0.0',
       buildNumber: '3000',
       buildSignature: '',
@@ -21,7 +21,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: AboutScreen()));
     await tester.pumpAndSettle();
 
-    expect(find.text('MusicBook'), findsOneWidget);
+    expect(find.text('Futoji'), findsOneWidget);
     expect(find.text('バージョン 1.0.0 (3000)'), findsOneWidget);
     expect(find.text('オープンソースライセンス'), findsOneWidget);
     expect(find.text(AboutScreen.sourceUrl), findsOneWidget);
@@ -29,7 +29,7 @@ void main() {
     await tester.tap(find.text('プライバシーポリシー'));
     await tester.pumpAndSettle();
     // 同梱した docs/PRIVACY_POLICY.md の見出しと表 (カード表示) が出る
-    expect(find.text('MusicBook プライバシーポリシー'), findsOneWidget);
+    expect(find.text('Futoji プライバシーポリシー'), findsOneWidget);
     expect(find.text('1. 収集する情報'), findsOneWidget);
     expect(find.textContaining('カメラで撮影した画像'), findsWidgets);
   });

@@ -1,9 +1,11 @@
-# MusicBook (mymusicbook)
+# Futoji
 
 音楽教室の紙資料 (楽譜・プリント・レッスンノートなど) をスマホでスキャンして、
 1冊の「デジタル教材」として管理する Flutter アプリです。
+名前は「譜 (楽譜) を綴じる」から。2026-10 に MusicBook (mymusicbook) から改名した
+(旧名のアプリが書き出したバックアップ zip も復元できる)。
 
-<p align="center"><img src="docs/images/store_feature.webp" width="640" alt="MusicBook: 楽譜・プリントを 1 冊のデジタル教材に"></p>
+<p align="center"><img src="docs/images/store_feature.webp" width="640" alt="Futoji: 楽譜・プリントを 1 冊のデジタル教材に"></p>
 
 ## スクリーンショット
 
@@ -155,7 +157,7 @@ flutter run
 
 ## データの保存場所
 
-- 画像: `<アプリ領域>/musicbook/images/<pageId>.webp`, `thumbs/<pageId>.webp`
+- 画像: `<アプリ領域>/futoji/images/<pageId>.webp`, `thumbs/<pageId>.webp`
 - メタデータ: Hive box `documents` / `pages` (手書きストロークはページレコード内にベクトル保存)
 
 アンインストールすれば全データ消える。設定 → バックアップ で全教材を zip に書き出し (Android は

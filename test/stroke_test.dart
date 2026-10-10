@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:mymusicbook/models/stroke.dart';
-import 'package:mymusicbook/widgets/stroke_layer.dart';
+import 'package:futoji/models/stroke.dart';
+import 'package:futoji/widgets/stroke_layer.dart';
 
 void main() {
   Stroke line({

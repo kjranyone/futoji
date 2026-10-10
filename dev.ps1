@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  MyMusicBook の開発用メンテナンススクリプト。
+  Futoji の開発用メンテナンススクリプト。
 
 .DESCRIPTION
   使い方: ./dev.ps1 <コマンド> [オプション]
@@ -64,7 +64,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
-$AppId = 'com.kjranyone.mymusicbook'
+$AppId = 'com.kjranyone.futoji'
 $CaptureDir = "/sdcard/Android/data/$AppId/files/training_captures"
 $SelfTestDir = "/sdcard/Android/data/$AppId/files/selftest"
 $env:PYTHONIOENCODING = 'utf-8'   # python ツールの出力を UTF-8 に揃える
@@ -298,23 +298,23 @@ switch ($Command) {
         $lines = @()
         while ((Get-Date) -lt $deadline) {
             Start-Sleep -Seconds 3
-            $lines = @(& $adb -s $id logcat -d -s flutter:I | Select-String 'MMB_SELFTEST')
-            if ($lines | Select-String 'MMB_SELFTEST (DONE|ERROR)') { break }
+            $lines = @(& $adb -s $id logcat -d -s flutter:I | Select-String 'FUTOJI_SELFTEST')
+            if ($lines | Select-String 'FUTOJI_SELFTEST (DONE|ERROR)') { break }
         }
-        $lines | ForEach-Object { $_.Line -replace '^.*MMB_SELFTEST ', '' } | Write-Host
+        $lines | ForEach-Object { $_.Line -replace '^.*FUTOJI_SELFTEST ', '' } | Write-Host
         $out = Join-Path $Root 'build/selftest'
         New-Item -ItemType Directory -Force $out | Out-Null
         & $adb -s $id pull "$SelfTestDir/result.json" (Join-Path $out 'result.json') | Out-Null
         # 保存処理の出力 (紙ありの画像のみ) も回収して目視確認できるようにする
         $saved = @(& $adb -s $id shell ls $SelfTestDir | Where-Object { $_ -like 'saved_*.webp' })
         foreach ($f in $saved) { & $adb -s $id pull "$SelfTestDir/$($f.Trim())" (Join-Path $out $f.Trim()) | Out-Null }
-        if (-not ($lines | Select-String 'MMB_SELFTEST DONE')) { throw '自己診断が完了しませんでした (アプリの 設定 → 開発者向け → 「紙面検出の自己診断を許可」が ON か、上のログを確認)' }
+        if (-not ($lines | Select-String 'FUTOJI_SELFTEST DONE')) { throw '自己診断が完了しませんでした (アプリの 設定 → 開発者向け → 「紙面検出の自己診断を許可」が ON か、上のログを確認)' }
         Write-Host "結果: $out/result.json" -ForegroundColor Green
     }
     'pull' {
         $id = Get-AndroidDevice
         $adb = Find-Adb
-        $tmp = Join-Path ([IO.Path]::GetTempPath()) "mmb_captures_$(Get-Date -Format yyyyMMddHHmmss)"
+        $tmp = Join-Path ([IO.Path]::GetTempPath()) "futoji_captures_$(Get-Date -Format yyyyMMddHHmmss)"
         New-Item -ItemType Directory -Force $tmp | Out-Null
         & $adb -s $id pull $CaptureDir $tmp
         if ($LASTEXITCODE -ne 0) { throw "取り出しに失敗しました ($CaptureDir が無い可能性: アプリで保存を ON にして切り抜きを確定してください)" }

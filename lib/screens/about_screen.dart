@@ -8,8 +8,8 @@ import '../widgets/edge_swipe_back.dart';
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
 
-  static const String appName = 'MusicBook';
-  static const String sourceUrl = 'https://github.com/kjranyone/mymusicbook';
+  static const String appName = 'Futoji';
+  static const String sourceUrl = 'https://github.com/kjranyone/futoji';
 
   @override
   Widget build(BuildContext context) {

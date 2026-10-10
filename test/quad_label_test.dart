@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mymusicbook/services/quad_label.dart';
-import 'package:mymusicbook/services/training_capture.dart';
+import 'package:futoji/services/quad_label.dart';
+import 'package:futoji/services/training_capture.dart';
 
 const square = <Offset>[
   Offset(0.25, 0.25),

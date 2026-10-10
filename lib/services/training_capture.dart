@@ -13,7 +13,7 @@ import 'quad_label.dart';
 /// 学習・評価用データとして端末に保存する (設定で ON のときのみ)。
 ///
 /// 保存先 (Android): `/sdcard/Android/data/<applicationId>/files/training_captures/`
-///   → `adb pull /sdcard/Android/data/com.kjranyone.mymusicbook/files/training_captures`
+///   → `adb pull /sdcard/Android/data/com.kjranyone.futoji/files/training_captures`
 /// 取り出したフォルダはそのまま `test/paper_net_eval_test.dart` の評価セットになる。
 class TrainingCapture {
   TrainingCapture._();

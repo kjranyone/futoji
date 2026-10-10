@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:mymusicbook/services/auto_capture.dart';
+import 'package:futoji/services/auto_capture.dart';
 
 void main() {
   List<Offset> quadAt(Offset center, double halfW, double halfH) {

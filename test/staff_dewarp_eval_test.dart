@@ -20,9 +20,9 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
-import 'package:mymusicbook/services/quad_label.dart';
-import 'package:mymusicbook/services/staff_dewarp.dart';
-import 'package:mymusicbook/services/warper.dart';
+import 'package:futoji/services/quad_label.dart';
+import 'package:futoji/services/staff_dewarp.dart';
+import 'package:futoji/services/warper.dart';
 
 String _env(String key, String fallback) =>
     Platform.environment[key]?.trim().isNotEmpty == true

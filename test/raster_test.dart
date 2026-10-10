@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
-import 'package:mymusicbook/services/raster.dart';
+import 'package:futoji/services/raster.dart';
 
 Uint8List _noise(int w, int h, int seed) {
   final rnd = math.Random(seed);

@@ -460,7 +460,7 @@ class OrtApiBindings {
   static Future<void> preparePlatform() async {
     if (!Platform.isIOS || iosApiBaseAddress != null) return;
     iosApiBaseAddress =
-        await const MethodChannel('mymusicbook/ort').invokeMethod<int>('apiBase');
+        await const MethodChannel('futoji/ort').invokeMethod<int>('apiBase');
   }
 
   /// libonnxruntime4jni.so (Android) から OrtApi を取得する。
@@ -592,7 +592,7 @@ class OrtApiBindings {
 
     final env = calloc<Pointer<Void>>();
     // ORT_LOGGING_LEVEL_WARNING = 2
-    final logId = Pointer<Uint8>.fromAddress('mymusicbook'.toNativeUtf8().address);
+    final logId = Pointer<Uint8>.fromAddress('futoji'.toNativeUtf8().address);
     bindings.check(bindings.createEnv(2, logId, env));
     calloc.free(logId);
 

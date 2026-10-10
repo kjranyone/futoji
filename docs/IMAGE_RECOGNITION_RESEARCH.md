@@ -1,6 +1,6 @@
 # 画像認識モデル調査 — MIT 等の寛容ライセンスで軽量に動く選択肢
 
-> 目的: MusicBook の「紙面検出」をさらに高精度化する、および将来の機能拡張
+> 目的: Futoji の「紙面検出」をさらに高精度化する、および将来の機能拡張
 > (文字起こし / 楽譜認識など) に使える、**MIT・Apache-2.0 等の商用寛容ライセンス**で
 > スマホ上で軽量に動く画像認識モデルとランタイムの選定記録。
 > 調査日: 2026-09-24
@@ -126,7 +126,7 @@ UI に支障のない範囲であり、撮影直後の 1 枚解析には十分�
   (`lib/services/training_capture.dart`)。形式は `<id>.jpg` + `<id>.json` (`QuadLabel`)
   - `corners`: 確定した四隅 (正解) / `predicted`: そのときのモデル出力 (未検出は null) / `edited`: 手で動かしたか
 - 取り出し (Android):
-  `adb pull /sdcard/Android/data/com.kjranyone.mymusicbook/files/training_captures training_data/eval`
+  `adb pull /sdcard/Android/data/com.kjranyone.futoji/files/training_captures training_data/eval`
 
 **評価** (PC)
 ```

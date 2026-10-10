@@ -423,7 +423,7 @@ def feature_graphic(screens: dict[str, Image.Image]) -> Image.Image:
     icon = rounded(icon.resize((150, 150), Image.LANCZOS), 34)
     shadow(canvas, (70, 90, 220, 240), 34, blur=18, offset=(0, 10))
     canvas.alpha_composite(icon, (70, 90))
-    d.text((250, 104), "MusicBook", font=font(70, 700), fill=WHITE, anchor="la")
+    d.text((250, 104), "Futoji", font=font(70, 700), fill=WHITE, anchor="la")
     d.text((252, 194), "楽譜・プリントを、", font=font(26, 500), fill=(255, 255, 255, 230),
            anchor="la")
     d.text((252, 228), "1 冊のデジタル教材に", font=font(26, 500), fill=(255, 255, 255, 230),

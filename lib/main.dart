@@ -22,20 +22,20 @@ Future<void> main() async {
   runApp(
     ChangeNotifierProvider.value(
       value: appState,
-      child: const MusicBookApp(),
+      child: const FutojiApp(),
     ),
   );
   // 開発用: 設定で許可され、端末に selftest/RUN があるときだけ紙面検出の自己診断を 1 回実行する
   unawaited(SelfTest.runIfRequested());
 }
 
-class MusicBookApp extends StatelessWidget {
-  const MusicBookApp({super.key});
+class FutojiApp extends StatelessWidget {
+  const FutojiApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'MusicBook',
+      title: 'Futoji',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       home: const HomeScreen(),

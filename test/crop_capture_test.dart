@@ -8,9 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:image/image.dart' as img;
-import 'package:mymusicbook/screens/crop_screen.dart';
-import 'package:mymusicbook/services/quad_label.dart';
-import 'package:mymusicbook/services/training_capture.dart';
+import 'package:futoji/screens/crop_screen.dart';
+import 'package:futoji/services/quad_label.dart';
+import 'package:futoji/services/training_capture.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
@@ -35,7 +35,7 @@ void main() {
   late File photo;
 
   setUp(() async {
-    tmp = await Directory.systemTemp.createTemp('mmb_crop_test');
+    tmp = await Directory.systemTemp.createTemp('futoji_crop_test');
     PathProviderPlatform.instance = _FakePathProvider(tmp.path);
     Hive.init('${tmp.path}/hive');
     await Hive.openBox<dynamic>('settings');

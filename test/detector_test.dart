@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
-import 'package:mymusicbook/services/detector.dart';
+import 'package:futoji/services/detector.dart';
 
 /// 暗い背景に明るい用紙を置いた合成画像で紙面検出を検証する。
 void main() {

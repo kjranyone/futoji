@@ -4,10 +4,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
-import 'package:mymusicbook/screens/settings_screen.dart';
-import 'package:mymusicbook/services/self_test.dart';
-import 'package:mymusicbook/services/training_capture.dart';
-import 'package:mymusicbook/state/app_state.dart';
+import 'package:futoji/screens/settings_screen.dart';
+import 'package:futoji/services/self_test.dart';
+import 'package:futoji/services/training_capture.dart';
+import 'package:futoji/state/app_state.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
@@ -32,7 +32,7 @@ void main() {
   late Directory tmp;
 
   setUp(() async {
-    tmp = await Directory.systemTemp.createTemp('mmb_settings_test');
+    tmp = await Directory.systemTemp.createTemp('futoji_settings_test');
     PathProviderPlatform.instance = _FakePathProvider(tmp.path);
     Hive.init('${tmp.path}/hive');
     await Hive.openBox<dynamic>('settings');

@@ -160,7 +160,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await SharePlus.instance.share(
         ShareParams(
           files: <XFile>[XFile(result.file.path, mimeType: 'application/zip')],
-          text: 'MusicBook のバックアップ ($summary)',
+          text: 'Futoji のバックアップ ($summary)',
         ),
       );
     } catch (e) {
@@ -169,7 +169,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  static const MethodChannel _saveChannel = MethodChannel('mymusicbook/save');
+  static const MethodChannel _saveChannel = MethodChannel('futoji/save');
 
   /// 書き出した zip の渡し先を選ぶ ('save' / 'share' / キャンセルで null)。
   Future<String?> _askExportTarget(String summary) => showModalBottomSheet<String>(

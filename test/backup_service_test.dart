@@ -5,13 +5,13 @@ import 'dart:io';
 import 'package:archive/archive_io.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
-import 'package:mymusicbook/models/adapters.dart';
-import 'package:mymusicbook/models/music_document.dart';
-import 'package:mymusicbook/models/music_page.dart';
-import 'package:mymusicbook/models/stroke.dart';
-import 'package:mymusicbook/services/backup_service.dart';
-import 'package:mymusicbook/services/db_service.dart';
-import 'package:mymusicbook/services/storage.dart';
+import 'package:futoji/models/adapters.dart';
+import 'package:futoji/models/music_document.dart';
+import 'package:futoji/models/music_page.dart';
+import 'package:futoji/models/stroke.dart';
+import 'package:futoji/services/backup_service.dart';
+import 'package:futoji/services/db_service.dart';
+import 'package:futoji/services/storage.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
@@ -33,7 +33,7 @@ void main() {
   late Directory out;
 
   setUpAll(() async {
-    root = await Directory.systemTemp.createTemp('mmb_backup_test');
+    root = await Directory.systemTemp.createTemp('futoji_backup_test');
     await Directory('${root.path}/tmp').create();
     PathProviderPlatform.instance = _FakePathProvider(root.path);
     // AppPaths は late final なのでテスト全体で 1 回だけ初期化する
@@ -210,6 +210,34 @@ void main() {
     final notZip = File('${out.path}/broken.zip')..writeAsStringSync('not a zip');
     await expectLater(
         BackupService.restore(notZip.path), throwsA(isA<FormatException>()));
+  });
+
+  test('改名前 (MusicBook) のアプリが書き出した zip も復元できる', () async {
+    await addDoc('docA', 'バイエル', 1);
+    final backup = await BackupService.export(outDir: out);
+    // 旧形式名 (mymusicbook-backup) の manifest に書き換えた zip を作る
+    final legacy = '${out.path}/legacy.zip';
+    final src = InputFileStream(backup.file.path);
+    final enc = ZipFileEncoder()..create(legacy);
+    try {
+      for (final entry in ZipDecoder().decodeStream(src)) {
+        if (!entry.isFile) continue;
+        if (entry.name == 'manifest.json') {
+          enc.addArchiveFile(ArchiveFile.string('manifest.json',
+              jsonEncode(<String, Object>{'format': BackupService.legacyFormatName, 'version': 1})));
+        } else {
+          enc.addArchiveFile(ArchiveFile.bytes(entry.name, entry.readBytes()!));
+        }
+      }
+    } finally {
+      await enc.close();
+      src.closeSync();
+    }
+    DbService.documents.get('docA')!.title = '改名後';
+
+    final r = await BackupService.restore(legacy);
+    expect(r.documentCount, 1);
+    expect(DbService.documents.get('docA')!.title, 'バイエル');
   });
 
   test('zip 内の想定外のパス (../ など) は展開しない', () async {

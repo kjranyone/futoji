@@ -1,6 +1,6 @@
 // ビューアのページめくり: 20% 以上ドラッグして離せばめくる (標準は半分以上必要)。
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mymusicbook/widgets/snappy_page_physics.dart';
+import 'package:futoji/widgets/snappy_page_physics.dart';
 
 void main() {
   const p = SnappyPageScrollPhysics();

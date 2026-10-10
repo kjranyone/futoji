@@ -8,7 +8,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
-import 'package:mymusicbook/services/detector.dart';
+import 'package:futoji/services/detector.dart';
 
 const maskPad = 0.02; // detectLuminance が内包する外側パディング (画像短辺比)
 
