@@ -93,9 +93,10 @@ class ImagePipeline {
     // 実機で約 11 秒かかっていた)。長辺 2600px は A4 を 300dpi よりやや粗めにした上限。
     final decoded = await decodeImageCapped(bytes, cap: _saveCap);
     lap('decode');
+    final focal35 = _focal35mmOf(bytes);
     final ai = aiSharpen ? await _aiArgs() : null;
     final prepared = await Isolate.run(() => _prepareScanData(
-        decoded, corners, rotationDeg, frame, reduceColors, ai, dewarp));
+        decoded, corners, rotationDeg, frame, reduceColors, ai, dewarp, focal35));
     lap('isolate');
     timings?.addAll(prepared.timings);
 
@@ -127,6 +128,16 @@ class ImagePipeline {
       width: prepared.width,
       height: prepared.height,
     );
+  }
+}
+
+/// 写真の EXIF にある 35mm 換算の焦点距離 (縦横比の推定に使う)。なければ null。
+double? _focal35mmOf(Uint8List bytes) {
+  try {
+    final v = img.decodeJpgExif(bytes)?.exifIfd['FocalLengthIn35mmFilm']?.toInt();
+    return v != null && v > 0 ? v.toDouble() : null;
+  } catch (_) {
+    return null;
   }
 }
 
@@ -182,7 +193,7 @@ Future<PageDewarp?> estimateDewarpForQuad({
 /// クロージャ経由で this を送らないよう top-level 関数にしてある。
 Future<_Prepared> _prepareScanData(img.Image decoded, List<List<double>> corners,
     int rotationDeg, List<Object?>? frame, bool reduceColors, List<Object?>? ai,
-    bool dewarp) async {
+    bool dewarp, double? focal35) async {
     final timings = <String, int>{};
     final sw = Stopwatch()..start();
     void lap(String name) {
@@ -222,7 +233,14 @@ Future<_Prepared> _prepareScanData(img.Image decoded, List<List<double>> corners
       for (final c in normalized) Offset(c.dx * srcW, c.dy * srcH),
     ];
 
-    final size = outputSizeForQuad(quad);
+    // 斜めから撮っても潰れないよう、透視から紙の本来の縦横比を推定して出力サイズを決める
+    final aspect = estimateQuadAspect(quad,
+        imageW: srcW.toDouble(),
+        imageH: srcH.toDouble(),
+        focalPx: focalPxFrom35mm(
+            focal35 ?? kDefaultFocal35mm, srcW.toDouble(), srcH.toDouble()));
+    final size = outputSizeForQuad(quad,
+        aspect: aspect == null ? null : snapToPaperAspect(aspect));
     final outW = size.width.round();
     final outH = size.height.round();
 

@@ -127,10 +127,63 @@ class Homography {
   }
 }
 
+/// 焦点距離が分からないときに使う 35mm 換算の焦点距離 (スマホの標準カメラの典型値)。
+const double kDefaultFocal35mm = 28;
+
+/// 35mm 換算の焦点距離を、幅 [imageW]・高さ [imageH] の画像上のピクセル単位に直す
+/// (35mm 換算は対角 43.27mm の画角で定義される)。
+double focalPxFrom35mm(double focal35, double imageW, double imageH) =>
+    focal35 * math.sqrt(imageW * imageW + imageH * imageH) / 43.27;
+
+/// 写真に写った四角形 [quad] ([TL, TR, BR, BL]、画像ピクセル座標) から、
+/// 元の長方形の縦横比 (幅/高さ) を透視を考慮して推定する (Zhang & He 2006)。
+///
+/// 辺の長さの平均だと、斜めから撮ったときに奥行き方向が縮んで潰れる。
+/// 主点は画像中心、焦点距離は [focalPx] (ピクセル) とする。
+/// 四角形が退化していて解けないときは null。
+double? estimateQuadAspect(List<Offset> quad,
+    {required double imageW, required double imageH, required double focalPx}) {
+  final cx = imageW / 2, cy = imageH / 2;
+  List<double> h(Offset p) => <double>[p.dx - cx, p.dy - cy, 1];
+  List<double> cross(List<double> a, List<double> b) => <double>[
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+      ];
+  double dot(List<double> a, List<double> b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+  // 論文の記法: m1=左上, m2=右上, m3=左下, m4=右下
+  final m1 = h(quad[0]), m2 = h(quad[1]), m3 = h(quad[3]), m4 = h(quad[2]);
+  final c14 = cross(m1, m4);
+  final d2 = dot(cross(m2, m4), m3);
+  final d3 = dot(cross(m3, m4), m2);
+  if (d2.abs() < 1e-9 || d3.abs() < 1e-9) return null;
+  final k2 = dot(c14, m3) / d2;
+  final k3 = dot(c14, m2) / d3;
+  // 幅方向・高さ方向の辺に対応するベクトル (カメラ座標で長方形の辺に比例)
+  final n2 = <double>[for (var i = 0; i < 3; i++) k2 * m2[i] - m1[i]];
+  final n3 = <double>[for (var i = 0; i < 3; i++) k3 * m3[i] - m1[i]];
+  final f2 = focalPx * focalPx;
+  final w2 = n2[0] * n2[0] + n2[1] * n2[1] + f2 * n2[2] * n2[2];
+  final h2 = n3[0] * n3[0] + n3[1] * n3[1] + f2 * n3[2] * n3[2];
+  if (!(w2 > 0) || !(h2 > 0)) return null;
+  final r = math.sqrt(w2 / h2);
+  return r.isFinite ? r : null;
+}
+
+/// 推定した縦横比 [aspect] (幅/高さ) が A 判・B 判の比率 (√2) に近ければ √2 ちょうどにする。
+/// 楽譜はほぼ A4・B4 なので、四隅の誤差による数 % のぶれを吸収できる。向き (縦長/横長) は保つ。
+double snapToPaperAspect(double aspect, {double tolerance = 0.05}) {
+  final long = aspect >= 1 ? aspect : 1 / aspect;
+  if ((long / math.sqrt2 - 1).abs() > tolerance) return aspect;
+  return aspect >= 1 ? math.sqrt2 : 1 / math.sqrt2;
+}
+
 /// 出力画像サイズを四角形の辺長から決める (長辺 maxSide に収める)。
 /// corners は [TL, TR, BR, BL] の順。
+/// [aspect] (幅/高さ) を与えると、辺長の平均のうち縮んで写っている側を伸ばしてその比率にする。
 Size outputSizeForQuad(List<Offset> corners,
-    {int maxSide = 2400, int minSide = 420}) {
+    {int maxSide = 2400, int minSide = 420, double? aspect}) {
   double len(Offset a, Offset b) => (a - b).distance;
   final top = len(corners[0], corners[1]);
   final bottom = len(corners[3], corners[2]);
@@ -138,6 +191,13 @@ Size outputSizeForQuad(List<Offset> corners,
   final right = len(corners[1], corners[2]);
   var w = (top + bottom) / 2;
   var h = (left + right) / 2;
+  if (aspect != null && aspect > 0 && h > 0) {
+    if (w / h < aspect) {
+      w = h * aspect;
+    } else {
+      h = w / aspect;
+    }
+  }
   if (w < minSide && h < minSide) {
     final s = minSide / math.max(w, h).clamp(1e-6, double.infinity);
     w *= s;

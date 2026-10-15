@@ -227,6 +227,89 @@ void main() {
     });
   });
 
+  group('紙の縦横比の推定', () {
+    // 幅 [w]・高さ [h] の長方形を、x 軸まわり [tilt]・y 軸まわり [pan]・光軸まわり [roll]
+    // (ラジアン) に傾けて距離 [dist] に置き、焦点距離 [f] のカメラで 3000x4000 の画像に写す。
+    List<Offset> project(double w, double h,
+        {double tilt = 0, double pan = 0, double roll = 0, double dist = 400, double f = 3200,
+        double shiftX = 0, double shiftY = 0}) {
+      Offset proj(double x, double y) {
+        // Rz * Ry * Rx を (x, y, 0) にかける
+        var px = x, py = y, pz = 0.0;
+        var t = py * math.cos(tilt) - pz * math.sin(tilt);
+        pz = py * math.sin(tilt) + pz * math.cos(tilt);
+        py = t;
+        t = px * math.cos(pan) + pz * math.sin(pan);
+        pz = -px * math.sin(pan) + pz * math.cos(pan);
+        px = t;
+        t = px * math.cos(roll) - py * math.sin(roll);
+        py = px * math.sin(roll) + py * math.cos(roll);
+        px = t;
+        px += shiftX;
+        py += shiftY;
+        pz += dist;
+        return Offset(1500 + f * px / pz, 2000 + f * py / pz);
+      }
+
+      return <Offset>[
+        proj(-w / 2, -h / 2),
+        proj(w / 2, -h / 2),
+        proj(w / 2, h / 2),
+        proj(-w / 2, h / 2),
+      ];
+    }
+
+    double estimate(List<Offset> quad, {double f = 3200}) =>
+        estimateQuadAspect(quad, imageW: 3000, imageH: 4000, focalPx: f)!;
+
+    test('斜めに写した A4 から元の比率が戻る', () {
+      const a4 = 210 / 297;
+      expect(estimate(project(210, 297, tilt: 0.5)), closeTo(a4, 1e-6));
+      expect(estimate(project(210, 297, pan: -0.4)), closeTo(a4, 1e-6));
+      expect(estimate(project(210, 297, tilt: 0.35, pan: 0.3, roll: 0.2, shiftX: 30, shiftY: -50)),
+          closeTo(a4, 1e-6));
+    });
+
+    test('辺長の平均では潰れる傾きでも推定は潰れない', () {
+      final quad = project(210, 297, tilt: 0.6);
+      final naive = outputSizeForQuad(quad, maxSide: 100000, minSide: 0);
+      // 前後に傾けると縦が縮んで写る (平均だと横長に潰れる)
+      expect(naive.width / naive.height, greaterThan(210 / 297 * 1.1));
+      final size = outputSizeForQuad(quad, maxSide: 100000, minSide: 0, aspect: estimate(quad));
+      expect(size.width / size.height, closeTo(210 / 297, 0.01));
+      // 縮んだ側 (縦) を伸ばす: 幅は辺長の平均のまま
+      expect(size.width, closeTo(naive.width, 1));
+    });
+
+    test('正面から撮った長方形はそのままの比率', () {
+      expect(estimate(project(300, 100)), closeTo(3, 1e-6));
+    });
+
+    test('焦点距離が多少違っても大きくは外れない', () {
+      final quad = project(210, 297, tilt: 0.4, pan: 0.2, f: 3200);
+      // 実際の焦点距離から ±20% ずれた値で推定
+      expect(estimate(quad, f: 2560), closeTo(210 / 297, 210 / 297 * 0.05));
+      expect(estimate(quad, f: 3840), closeTo(210 / 297, 210 / 297 * 0.05));
+    });
+
+    test('退化した四角形は null', () {
+      const line = [Offset(0, 0), Offset(10, 0), Offset(20, 0), Offset(30, 0)];
+      expect(estimateQuadAspect(line, imageW: 100, imageH: 100, focalPx: 100), isNull);
+    });
+
+    test('√2 の近くだけ √2 に寄せ、向きは保つ', () {
+      expect(snapToPaperAspect(0.72), closeTo(1 / math.sqrt2, 1e-12));
+      expect(snapToPaperAspect(1.38), closeTo(math.sqrt2, 1e-12));
+      expect(snapToPaperAspect(0.75), 0.75); // 3:4 は寄せない
+      expect(snapToPaperAspect(1.0), 1.0);
+    });
+
+    test('35mm 換算の焦点距離をピクセルに直す', () {
+      // 対角 5000px の画像で 43.27mm 相当 = 対角と同じ長さ
+      expect(focalPxFrom35mm(43.27, 3000, 4000), closeTo(5000, 1e-9));
+    });
+  });
+
   test('isConvexQuad', () {
     expect(
       isConvexQuad(const [
