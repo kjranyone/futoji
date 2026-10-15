@@ -1,11 +1,9 @@
 import 'dart:io';
-import 'dart:isolate';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
-import 'package:image/image.dart' as img;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
@@ -13,9 +11,6 @@ import '../models/crop_result.dart';
 import '../models/music_document.dart';
 import '../services/auto_capture.dart';
 import '../services/detection_worker.dart';
-import '../services/detector.dart';
-import '../services/fast_decode.dart';
-import '../services/paper_net.dart';
 import '../state/app_state.dart';
 import '../widgets/dialogs.dart';
 import '../widgets/edge_swipe_back.dart';
@@ -71,6 +66,10 @@ class _CameraScreenState extends State<CameraScreen>
   // ---- 自動撮影 ----
   bool _autoMode = false;
   final AutoCaptureController _auto = AutoCaptureController();
+
+  /// 直前に自動保存したページの切り抜き範囲 (= 撮影時の枠、プレビュー正規化座標)。
+  /// 入れ替え待ちの間はいまの検出ではなくこれを青で描き、保存された範囲をそのまま見せる。
+  List<Offset>? _savedQuad;
 
   /// 自動撮影のカウントダウンの進み (0..1、カウントダウン中でなければ null)。
   /// 検出結果は 0.2 秒おき程度なので、表示はフレームごとの Ticker で滑らかに進める。
@@ -253,24 +252,41 @@ class _CameraScreenState extends State<CameraScreen>
       final fire = _auto.feed(mapped, DateTime.now());
       if (_auto.paused) {
         _pauseAutoForRepeats();
-      } else if (fire) {
+      } else if (fire && corners != null) {
         HapticFeedback.mediumImpact();
-        _capture(auto: true);
+        // カウントダウンで止まっていた枠をそのまま保存範囲にする
+        // (フレーム座標で渡し、本撮影画像への写像は保存処理が行う)
+        _capture(
+          autoCrop: CropResult(
+            corners: corners,
+            rotation: 0,
+            frameWidth: _liveFrameW,
+            frameHeight: _liveFrameH,
+            sensorOrientation: _sensorOrientation,
+          ),
+          autoQuad: mapped,
+        );
       } else if (_auto.countdownStartedAt != null && !_countdownTicker.isActive) {
         _countdownTicker.start();
       }
     }
-    // 枠の色: 探索中は白、カウントダウン中は緑、撮影済み (入れ替え待ち) は青
+    // 枠の色: 探索中は白、カウントダウン中は緑、保存済み (入れ替え待ち) は青。
+    // 青の枠はいまの検出ではなく保存した範囲 (撮影時の枠) を描く。
+    // 手動で切り抜いたときは青にしない
     var phase = LivePhase.searching;
+    var shown = mapped;
     if (_autoMode && mapped != null) {
       if (!_auto.isArmed) {
-        phase = LivePhase.captured;
+        if (_savedQuad != null) {
+          phase = LivePhase.captured;
+          shown = _savedQuad;
+        }
       } else if (_auto.countdownStartedAt != null) {
         phase = LivePhase.countdown;
       }
     }
     final phaseChanged = phase != _live.value.phase;
-    _live.value = LiveOverlay(corners: mapped, phase: phase);
+    _live.value = LiveOverlay(corners: shown, phase: phase);
     if (phaseChanged && mounted) setState(() {}); // 下部の案内文を状態に合わせる
   }
 
@@ -293,6 +309,7 @@ class _CameraScreenState extends State<CameraScreen>
   void _pauseAutoForRepeats() {
     setState(() => _autoMode = false);
     _auto.reset();
+    _savedQuad = null;
     _live.value = LiveOverlay(corners: _live.value.corners);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -311,6 +328,7 @@ class _CameraScreenState extends State<CameraScreen>
     setState(() {
       _autoMode = !_autoMode;
       _auto.reset();
+      _savedQuad = null;
     });
     _live.value = LiveOverlay(corners: _live.value.corners);
     if (_autoMode) {
@@ -378,13 +396,10 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
-  /// 輝度化を別 isolate で行う。インスタンスメソッド内のクロージャを Isolate.run に渡すと
-  /// State やカメラまで一緒に送ろうとして「object is unsendable」で必ず失敗し、
-  /// 自動撮影が毎回「紙面を検出できませんでした」になっていた (README の落とし穴メモ)。
-  static Future<Uint8List> _grayInIsolate(img.Image im) =>
-      Isolate.run(() => DocumentDetector.toGray(im));
-
-  Future<void> _capture({bool auto = false}) async {
+  /// 撮影する。[autoCrop] があれば自動撮影: 切り抜き画面を出さず、その範囲
+  /// (カウントダウン中に画面に出ていた枠) で保存する。[autoQuad] はその枠の
+  /// プレビュー座標で、保存後の青い枠に使う。
+  Future<void> _capture({CropResult? autoCrop, List<Offset>? autoQuad}) async {
     final controller = _controller;
     if (controller == null ||
         !controller.value.isInitialized ||
@@ -393,37 +408,15 @@ class _CameraScreenState extends State<CameraScreen>
       return;
     }
     setState(() => _busy = true);
+    _savedQuad = autoQuad;
     final app = context.read<AppState>();
     XFile? raw;
     try {
       raw = await controller.takePicture();
       if (!mounted) return;
 
-      if (auto && _live.value.corners != null && _live.value.corners!.length == 4) {
-        // 自動モード: 切り抜き画面をスキップして直接保存。
-        // コーナーは本撮影画像に学習済みネットをかけた結果のみを使う。
-        // null は「紙が写っていない」の意味であり、誤検出を保存しないよう
-        // ライブ枠などへフォールバックせず拒否する。
-        List<Offset>? corners;
-        try {
-          final bytes = await File(raw.path).readAsBytes();
-          // 端末のデコーダで縮小しながら読む (純 Dart の全画素デコードは実機で約 11 秒)
-          final im = await decodeImageCapped(bytes, cap: 512);
-          final gray = await _grayInIsolate(im);
-          corners = await PaperNet.detectQuad(gray, im.width, im.height);
-        } catch (e) {
-          debugPrint('auto capture detect failed: $e');
-        }
-        if (corners == null) {
-          try {
-            await File(raw.path).delete();
-          } catch (_) {}
-          // 同じ誤検出位置で連続発火しないよう現在のライブ枠を記録しておく
-          _auto.noteManualCapture(_live.value.corners, DateTime.now());
-          if (mounted) _toast('紙面を検出できませんでした');
-          return;
-        }
-        await _savePage(app, raw.path, CropResult(corners: corners, rotation: 0));
+      if (autoCrop != null) {
+        await _savePage(app, raw.path, autoCrop);
         if (mounted) {
           _toast('${widget.document.pageCount}ページ目を自動保存しました');
         }
@@ -450,6 +443,7 @@ class _CameraScreenState extends State<CameraScreen>
         await File(raw.path).delete();
       } catch (_) {}
     } catch (e) {
+      _savedQuad = null;
       if (mounted) _toast('保存に失敗しました: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -808,7 +802,7 @@ enum LivePhase {
   /// 止まっていて撮影までカウントダウン中 (緑)
   countdown,
 
-  /// この紙は撮影済み。入れ替え待ち (青)
+  /// この紙は保存済み。入れ替え待ち (青)。枠は実際に保存した範囲を描く
   captured,
 }
 

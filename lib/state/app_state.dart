@@ -153,6 +153,8 @@ class AppState extends ChangeNotifier {
       cornersNormalized: crop.corners,
       rotationDeg: crop.rotation,
       pageId: pageId,
+      // ライブ検出の枠ならフレーム座標なので、本撮影画像への写像を任せる
+      liveFrame: crop.frameWidth != null ? crop : null,
       reduceColors: reduceColors,
       aiSharpen: aiSharpen,
       dewarp: dewarp,
