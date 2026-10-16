@@ -96,6 +96,14 @@ gh run list --workflow android.yml           # 進み具合
   署名が変わるので上書き更新はできない (Artifacts の名前に `throwaway` と付く)
 - Play 公開後は Play 側が別の鍵 (アプリ署名鍵) で再署名するため、ここで作った APK と Play 版は
   相互に上書きインストールできない。テスター配布用と割り切る
+- この APK は `--dart-define=FUTOJI_DIST=github` 付きでビルドする。これで GitHub Releases の
+  更新確認 (起動時に 1 日 1 回 + 設定の「アップデートを確認」) と、そのための INTERNET 権限が入る
+  (`lib/services/update_checker.dart`、`android/app/src/github/AndroidManifest.xml`)。
+  Play は Play 以外から自分を更新する仕組みを認めず、ストア版は通信しない方針なので、
+  ストア提出用のビルド (appbundle・iOS) には付けない。ローカルで試すときは
+  `flutter run --dart-define=FUTOJI_DIST=github` (debug は元から INTERNET 権限がある)
+- 更新確認はタグのバージョン (v1.0.2 → 1.0.2) と pubspec のバージョンを比べるので、
+  リリースのたびに pubspec の version を上げてからタグを付ける
 - compileSdk 37 の SDK パッケージ名は `platforms;android-37.0` だが AGP は `platforms/android-37` を
   探すので、ワークフロー内でコピーして用意している (ローカルと同じ対処)
 

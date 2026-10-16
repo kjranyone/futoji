@@ -98,8 +98,9 @@ jobs:
 
       - run: flutter pub get
 
+      # FUTOJI_DIST=github: GitHub Releases の更新確認と、そのための通信権限を入れる (ストア版には入れない)
       - name: ビルド (ABI ごとに分割)
-        run: flutter build apk --release --split-per-abi
+        run: flutter build apk --release --split-per-abi --dart-define=FUTOJI_DIST=github
 
       - name: ファイル名を整える
         id: name

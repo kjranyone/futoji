@@ -11,9 +11,11 @@ import '../screens/about_screen.dart';
 import '../services/backup_service.dart';
 import '../services/self_test.dart';
 import '../services/training_capture.dart';
+import '../services/update_checker.dart';
 import '../state/app_state.dart';
 import '../widgets/dialogs.dart';
 import '../widgets/edge_swipe_back.dart';
+import '../widgets/update_prompt.dart';
 
 /// 設定画面。バックアップの書き出し・復元と、開発者向けの機能
 /// (検出改善データの保存・自己診断) の切り替え。
@@ -25,6 +27,25 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  bool _checkingUpdate = false;
+
+  Future<void> _checkForUpdate() async {
+    setState(() => _checkingUpdate = true);
+    try {
+      final release = await UpdateChecker.check();
+      if (!mounted) return;
+      if (release == null) {
+        showSnackBar(context, '最新のバージョンです');
+      } else {
+        await showUpdateDialog(context, release);
+      }
+    } catch (_) {
+      if (mounted) showSnackBar(context, '確認できませんでした。通信できる状態か確かめてください');
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
+  }
+
   Future<void> _setTrainingCapture(bool value) async {
     await TrainingCapture.setEnabled(value);
     if (!mounted) return;
@@ -309,6 +330,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 MaterialPageRoute<void>(builder: (_) => const AboutScreen()),
               ),
             ),
+            if (UpdateChecker.available)
+              ListTile(
+                leading: const Icon(Icons.system_update_outlined),
+                title: const Text('アップデートを確認'),
+                subtitle: const Text('GitHub で新しいバージョンが公開されているか確かめます'),
+                trailing: _checkingUpdate
+                    ? const SizedBox(
+                        width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                    : null,
+                onTap: _checkingUpdate ? null : _checkForUpdate,
+              ),
             const Divider(),
             _sectionHeader(theme, '開発者向け'),
             SwitchListTile(

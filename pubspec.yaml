@@ -23,6 +23,7 @@ dependencies:
   archive: ">=4.0.0 <5.0.0"
   file_picker: ^13.1.0
   package_info_plus: ^10.2.2
+  url_launcher: ^6.3.3
 
 dev_dependencies:
   flutter_test:

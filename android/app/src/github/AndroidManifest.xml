@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- GitHub Releases で配る APK だけが使う: 更新確認で GitHub API に問い合わせる
+         (android/app/build.gradle.kts の githubDist) -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+</manifest>

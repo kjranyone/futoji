@@ -9,11 +9,13 @@ import '../screens/document_screen.dart';
 import '../screens/settings_screen.dart';
 import '../services/db_service.dart';
 import '../services/search.dart';
+import '../services/update_checker.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../utils.dart';
 import '../widgets/dialogs.dart';
 import '../widgets/image_fade_in.dart';
+import '../widgets/update_prompt.dart';
 
 /// ブック一覧。ブック一覧・ページ一覧・ビューアは黒背景で揃える。
 /// テーマは画面の外側に置く (内側だと、ここから開くダイアログやメニューに届かない)。
@@ -36,6 +38,16 @@ class _HomeScreenState extends State<_HomeView> {
   bool _searching = false;
   String _query = '';
   final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    if (UpdateChecker.available) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) autoCheckForUpdate(context);
+      });
+    }
+  }
 
   @override
   void dispose() {

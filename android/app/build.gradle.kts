@@ -1,3 +1,4 @@
+import java.util.Base64
 import java.util.Properties
 
 plugins {
@@ -12,6 +13,13 @@ val keystoreProperties = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 val hasReleaseKey = keystoreProperties.getProperty("storeFile") != null
+
+// GitHub Releases で配る APK (--dart-define=FUTOJI_DIST=github) かどうか。
+// flutter は --dart-define を 1 つずつ base64 にして -Pdart-defines へカンマ区切りで渡す。
+val githubDist = (project.findProperty("dart-defines") as String?)
+    ?.split(',')
+    ?.mapNotNull { runCatching { String(Base64.getDecoder().decode(it)) }.getOrNull() }
+    ?.contains("FUTOJI_DIST=github") == true
 
 android {
     namespace = "com.kjranyone.futoji"
@@ -72,6 +80,12 @@ android {
                 keyPassword = keystoreProperties.getProperty("keyPassword")
             }
         }
+    }
+
+    // 更新確認 (lib/services/update_checker.dart) のための通信権限は GitHub 配布の APK にだけ付ける。
+    // ストア版は通信しない (docs/PRIVACY_POLICY.md)。debug / profile は flutter が元から付けている
+    if (githubDist) {
+        sourceSets.getByName("release").manifest.srcFile("src/github/AndroidManifest.xml")
     }
 
     buildTypes {
