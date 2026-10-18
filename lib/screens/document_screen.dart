@@ -331,15 +331,11 @@ class _DocumentScreenState extends State<_DocumentView> {
             ListTile(
               leading: Icon(Icons.delete_outline,
                   color: Theme.of(ctx).colorScheme.error),
-              title: Text('教材を削除',
+              title: Text('ブックを削除',
                   style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
               onTap: () async {
                 Navigator.of(ctx).pop();
-                final ok = await showConfirmDialog(
-                  context,
-                  '教材を削除',
-                  '「${widget.document.title}」の全ページと手書きメモを削除します。元に戻せません。',
-                );
+                final ok = await confirmDeleteBook(context, widget.document);
                 if (ok && mounted) {
                   await app.deleteDocument(widget.document);
                   if (mounted) Navigator.of(context).pop();

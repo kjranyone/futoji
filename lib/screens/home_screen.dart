@@ -219,11 +219,7 @@ class _DocumentCard extends StatelessWidget {
                   style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
               onTap: () async {
                 Navigator.of(ctx).pop();
-                final ok = await showConfirmDialog(
-                  context,
-                  '教材を削除',
-                  '「${doc.title}」の全ページと手書きメモを削除します。元に戻せません。',
-                );
+                final ok = await confirmDeleteBook(context, doc);
                 if (ok) await app.deleteDocument(doc);
               },
             ),

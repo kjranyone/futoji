@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../models/music_document.dart';
+
 /// 共通ダイアログ。
 Future<String?> showRenameDialog(BuildContext context, String current) {
   final controller = TextEditingController(text: current);
@@ -114,6 +116,13 @@ Future<bool> showConfirmDialog(
   );
   return result ?? false;
 }
+
+/// ブックの削除確認。消えるページ数を示す。
+Future<bool> confirmDeleteBook(BuildContext context, MusicDocument doc) => showConfirmDialog(
+      context,
+      'ブックを削除',
+      '「${doc.title}」の ${doc.pageCount} ページと手書きメモをすべて削除します。元に戻せません。',
+    );
 
 /// [bottomMargin] を渡すと画面の下から浮かせて出す
 /// (カメラのシャッターなど、下にある操作に被せたくない画面用)。
