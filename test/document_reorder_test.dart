@@ -1,4 +1,4 @@
-// 教材画面の並び替えモード: ドラッグで入れ替え → 「完了」で一括保存、取りやめると保存しない。
+// ブック画面の並び替えモード: ドラッグで入れ替え → 「完了」で一括保存、取りやめると保存しない。
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -29,7 +29,7 @@ void main() {
     await Hive.openBox<MusicDocument>('documents');
     await Hive.openBox<MusicPage>('pages');
     doc = MusicDocument(
-        id: 'doc', title: '教材', createdAt: 1, updatedAt: 1, pageCount: 3,
+        id: 'doc', title: 'ブック', createdAt: 1, updatedAt: 1, pageCount: 3,
         coverThumbPath: 'thumb-A');
     await DbService.documents.put(doc.id, doc);
     for (final (i, id) in <String>['A', 'B', 'C'].indexed) {
@@ -135,7 +135,7 @@ void main() {
         Theme.of(tester.element(find.byType(Scaffold).last)).scaffoldBackgroundColor;
     expect(bg(), Colors.black);
 
-    await tester.tap(find.text('教材'));
+    await tester.tap(find.text('ブック'));
     await tester.pumpAndSettle();
     expect(find.byType(DocumentScreen), findsOneWidget);
     expect(bg(), Colors.black);

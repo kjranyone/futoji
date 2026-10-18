@@ -11,7 +11,7 @@ Future<void> showUpdateDialog(BuildContext context, ReleaseInfo release) {
       title: const Text('新しいバージョンがあります'),
       content: Text('バージョン ${release.version} が公開されています。\n\n'
           'ダウンロードページで arm64-v8a の APK をダウンロードしてインストールしてください。'
-          '上書きでインストールすると、教材やメモはそのまま残ります。'),
+          '上書きでインストールすると、ブックやメモはそのまま残ります。'),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),

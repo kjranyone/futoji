@@ -3,7 +3,7 @@ import '../models/music_page.dart';
 
 /// 検索クエリの解釈と一致判定 (Index 検索の純 Dart コア)。
 ///
-/// 対象: 教材タイトル / 教材タグ / ページメモ。
+/// 対象: ブック名 / ブックのタグ / ページメモ。
 /// クエリは空白区切りでトークン化し、すべてのトークンが
 /// いずれかのフィールドに (大文字小文字を無視して) 含まれる場合に一致。
 class DocSearch {
@@ -18,8 +18,8 @@ class DocSearch {
         .toList(growable: false);
   }
 
-  /// 教材がクエリに一致するか。
-  /// [pages] はその教材の全ページ (ページメモ検索用)。
+  /// ブックがクエリに一致するか。
+  /// [pages] はそのブックの全ページ (ページメモ検索用)。
   static bool matches(
     MusicDocument doc,
     Iterable<MusicPage> pages,

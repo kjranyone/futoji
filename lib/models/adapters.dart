@@ -14,7 +14,7 @@ class MusicDocumentAdapter extends TypeAdapter<MusicDocument> {
     final map = Map<String, dynamic>.from(reader.readMap());
     return MusicDocument(
       id: map['id'] as String,
-      title: map['title'] as String? ?? '無題の教材',
+      title: bookTitleFrom(map['title'] as String?),
       createdAt: (map['createdAt'] as num?)?.toInt() ?? 0,
       updatedAt: (map['updatedAt'] as num?)?.toInt() ?? 0,
       pageCount: (map['pageCount'] as num?)?.toInt() ?? 0,

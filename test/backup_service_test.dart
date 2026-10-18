@@ -104,7 +104,7 @@ void main() {
         ));
   }
 
-  test('書き出し → 全消去 → 復元で教材・ページ・手書き・画像が戻る', () async {
+  test('書き出し → 全消去 → 復元でブック・ページ・手書き・画像が戻る', () async {
     await addDoc('docA', 'バイエル', 0);
     await addPage('docA', 'docAp0', 0,
         note: 'ここで転調',
@@ -158,7 +158,7 @@ void main() {
     expect(File(page.thumbPath).readAsStringSync(), 'thumb-docAp0');
   });
 
-  test('復元は同じ教材だけ置き換え、手元にしかない教材は残す', () async {
+  test('復元は同じブックだけ置き換え、手元にしかないブックは残す', () async {
     await addDoc('docA', '元のタイトル', 2);
     final backup = await BackupService.export(outDir: out);
 
@@ -168,13 +168,13 @@ void main() {
     DbService.documents.get('docA')!
       ..title = '改名後'
       ..pageCount = 1;
-    await addDoc('docC', '手元だけの教材', 1);
+    await addDoc('docC', '手元だけのブック', 1);
 
     await BackupService.restore(backup.file.path);
 
     expect(DbService.documents.get('docA')!.title, '元のタイトル');
     expect(DbService.pages.values.where((p) => p.documentId == 'docA').length, 2);
-    expect(DbService.documents.get('docC')!.title, '手元だけの教材');
+    expect(DbService.documents.get('docC')!.title, '手元だけのブック');
     expect(File(AppPaths.imagePathFor('docCp0')).existsSync(), isTrue);
   });
 

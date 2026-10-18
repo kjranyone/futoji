@@ -51,7 +51,7 @@ class AboutScreen extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 32),
               child: Text(
-                '音楽教室の楽譜やプリントをカメラで取り込み、教材ごとに整理して閲覧するアプリです。'
+                '音楽教室の楽譜やプリントをカメラで取り込み、ブックごとに整理して閲覧するアプリです。'
                 '撮影した資料と手書きメモは端末の中だけに保存されます。',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyMedium,

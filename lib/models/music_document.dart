@@ -1,4 +1,15 @@
-/// 教材 (楽譜・プリントなどのまとまり)。
+/// 新しく作ったブックの仮の名前。
+const String kUntitledBookTitle = '無題のブック';
+
+/// 用語を「ブック」に揃える前の仮の名前。
+const String _legacyUntitledTitle = '無題の教材';
+
+/// 保存済みの名前を読むときに使う。名前が無いとき・以前の仮の名前のときは今の仮の名前にする
+/// (画面に「教材」が残らないように)。
+String bookTitleFrom(String? stored) =>
+    stored == null || stored == _legacyUntitledTitle ? kUntitledBookTitle : stored;
+
+/// ブック (楽譜・プリントなどのまとまり)。
 class MusicDocument {
   MusicDocument({
     required this.id,

@@ -60,7 +60,7 @@ Future<String?> showNoteDialog(BuildContext context, String current) {
   );
 }
 
-/// 教材タグ編集ダイアログ (カンマ区切り)。
+/// ブックのタグ編集ダイアログ (カンマ区切り)。
 Future<String?> showTagsDialog(BuildContext context, List<String> current) {
   final controller = TextEditingController(text: current.join(', '));
   return showDialog<String>(

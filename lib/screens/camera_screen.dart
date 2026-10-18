@@ -503,7 +503,7 @@ class _CameraScreenState extends State<CameraScreen>
       return const Center(child: CircularProgressIndicator());
     }
 
-    // 教材の既存ページに続く番号 (addScannedPage が保存のたびに pageCount を更新する)
+    // ブックの既存ページに続く番号 (addScannedPage が保存のたびに pageCount を更新する)
     final pageSoFar = widget.document.pageCount + 1;
     final reduceColors = context.watch<AppState>().reduceColors;
     final aiSharpen = context.watch<AppState>().aiSharpen;

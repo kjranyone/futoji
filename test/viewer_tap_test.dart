@@ -27,7 +27,7 @@ void main() {
     Hive.init(tmp.path);
     await Hive.openBox<MusicDocument>('documents');
     await Hive.openBox<MusicPage>('pages');
-    doc = MusicDocument(id: 'doc', title: '教材', createdAt: 1, updatedAt: 1, pageCount: 3);
+    doc = MusicDocument(id: 'doc', title: 'ブック', createdAt: 1, updatedAt: 1, pageCount: 3);
     await DbService.documents.put(doc.id, doc);
     for (int i = 0; i < 3; i++) {
       await DbService.pages.put(

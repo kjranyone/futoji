@@ -37,7 +37,7 @@ flutter build appbundle --release --target-platform android-arm64   # Play 提�
 - [ ] 設定画面の「開発者向け」がすべてオフの状態で通常利用に問題がない
 - [ ] 設定 → オープンソースライセンス が開ける
 - [ ] 設定 → バックアップを書き出す → 保存先を選んで保存 (Download / Google ドライブ) → アンインストール →
-      再インストール → バックアップから復元 で教材・手書き・タグが戻る
+      再インストール → バックアップから復元 でブック・手書き・タグが戻る
       (2026-10-04 HiPad で Download 経由を確認済み。Drive アプリの無い端末だったため Drive は未確認)
 - [ ] プライバシーポリシー ([PRIVACY_POLICY.md](PRIVACY_POLICY.md)) を公開 URL に置き、Play Console に登録
 
@@ -60,10 +60,10 @@ flutter build appbundle --release --target-platform android-arm64   # Play 提�
 作り直す手順 (実機は HiPad 1600×2560 / 320dpi):
 
 ```powershell
-python tools/make_store_samples.py      # 生成写真を台形補正してサンプル教材の zip を作る (build/store_samples)
+python tools/make_store_samples.py      # 生成写真を台形補正してサンプルのブックの zip を作る (build/store_samples)
 adb push build/store_samples/futoji_backup_promo.zip /sdcard/Download/
 # アプリ: 設定 → バックアップから復元 → ファイルを選ぶ → Download の zip
-#   (一覧に出ないときは picker の検索で "futoji")。既存の教材はそのまま残る
+#   (一覧に出ないときは picker の検索で "futoji")。既存のブックはそのまま残る
 # タブレットの画面を撮る: home / doc / viewer / draw / camera (自動 ON) / crop
 adb exec-out screencap -p > shots/home_promo2.png   # ファイル名は tools/make_store_images.py の SHOTS
 # スマホ向けは表示サイズを変えて撮る (アプリが 2 列レイアウトになる)
@@ -76,7 +76,7 @@ python tools/make_store_images.py --shots shots --pages build/store_samples/page
 - カメラ・切り抜き画面は、実機のカメラの前に楽譜を置けないので、UI だけ実機のキャプチャを使い、
   プレビュー部分を生成写真に差し替えてアプリと同じ描き方で検出枠を描いている
   (`camera_composite` / `crop_composite`)。合成結果は `build/store_screens/` で確認できる
-- 撮り終えたら端末のサンプル教材 (promo_*) を消す (ホームで長押し → 削除)
+- 撮り終えたら端末のサンプルのブック (promo_*) を消す (ホームで長押し → 削除)
 
 ### GitHub Actions での APK ビルド (野良配布・動作確認用)
 
@@ -111,7 +111,7 @@ gh run list --workflow android.yml           # 進み具合
 
 - データの収集: **なし** (通信を行わず、開発者のサーバーもない。AndroidManifest に INTERNET 権限なし)
 - データの共有: **なし** (PDF・バックアップ zip は利用者の操作で OS の共有シートに渡すだけ)
-- 端末内に保存するデータ: 撮影画像・教材メタデータ・手書きメモ (アプリ専用領域)
+- 端末内に保存するデータ: 撮影画像・ブックのメタデータ・手書きメモ (アプリ専用領域)
 - 権限: CAMERA (紙資料の撮影のみ)
 
 ## iOS

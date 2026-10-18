@@ -19,7 +19,7 @@
   build/store_screens/ 合成したカメラ・切り抜き画面そのもの (確認用 PNG)
 
 使い方:
-  python tools/make_store_samples.py          # 生成写真からサンプル教材のバックアップ zip を作る
+  python tools/make_store_samples.py          # 生成写真からサンプルのブックのバックアップ zip を作る
   (zip を端末の Download に置き、設定 → バックアップから復元。各画面を adb screencap で撮る)
   python tools/make_store_images.py --shots <スクショの入ったフォルダ> --pages <補正後ページ>
 
@@ -61,7 +61,7 @@ class Device:
     crop_rect: tuple[int, int, int, int]  # 切り抜き画面の画像矩形 (x0, y0, x1, y1)
     crop_msg: tuple[int, int]       # 切り抜き画面の下部メッセージ行 (y0, y1)
     shutter: tuple[int, int, int, int, int]  # (cx, cy, 外径半径, 輪の太さ, 内側の円の半径)
-    home_mask: tuple[int, int] | None = None  # ホーム画面で消す行 (開発端末の私物の教材)
+    home_mask: tuple[int, int] | None = None  # ホーム画面で消す行 (開発端末の私物のブック)
 
     def dp(self, v: float) -> int:
         return round(v * self.dpr)
@@ -189,7 +189,7 @@ def squash_black(img: Image.Image, start: int, min_run: int, keep: int) -> Image
 
 
 def clean(shot: Image.Image, dev: Device, kind: str) -> Image.Image:
-    """ステータスバーとナビゲーションバーを落とす。ホームは開発端末の私物教材を消す。"""
+    """ステータスバーとナビゲーションバーを落とす。ホームは開発端末の私物のブックを消す。"""
     img = shot.convert("RGB")
     if kind == "home" and dev.home_mask:
         y0, y1 = dev.home_mask
@@ -320,7 +320,7 @@ SLIDES = [
     Slide("02_crop", ["四隅はあとから、", "指でぴったり"], "自動検出した範囲を指で微調整。回転もワンタップ", "crop"),
     Slide("03_warp", ["斜めから撮っても、", "まっすぐに"], "台形補正に加えて、五線を手がかりに紙の反りも直す",
           special="before_after"),
-    Slide("04_home", ["教材ごとに、", "1 冊にまとめる"], "タグと検索で、必要なプリントがすぐ開く", "home"),
+    Slide("04_home", ["楽譜もプリントも、", "1 冊のブックに"], "タグと検索で、必要なプリントがすぐ開く", "home"),
     Slide("05_draw", ["楽譜の上に、", "そのまま書き込む"], "3 色のペンと消しゴム。拡大しても位置はずれない", "draw",
           fit=True),
     Slide("06_pdf", ["PDF にして、", "そのまま共有"], "全ページを 1 冊の PDF に。手書きメモも一緒に出力", "doc_menu"),
@@ -426,7 +426,7 @@ def feature_graphic(screens: dict[str, Image.Image]) -> Image.Image:
     d.text((250, 104), "Futoji", font=font(70, 700), fill=WHITE, anchor="la")
     d.text((252, 194), "楽譜・プリントを、", font=font(26, 500), fill=(255, 255, 255, 230),
            anchor="la")
-    d.text((252, 228), "1 冊のデジタル教材に", font=font(26, 500), fill=(255, 255, 255, 230),
+    d.text((252, 228), "1 冊のブックに", font=font(26, 500), fill=(255, 255, 255, 230),
            anchor="la")
     for i, line in enumerate(["自動撮影 ・ 台形補正 ・ 手書きメモ ・ PDF 書き出し",
                               "通信なし。すべて端末の中に保存"]):

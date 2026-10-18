@@ -1,4 +1,4 @@
-"""ストア掲載画像の撮影用に、生成楽譜写真 (training_data/paper_photos) からサンプル教材を
+"""ストア掲載画像の撮影用に、生成楽譜写真 (training_data/paper_photos) からサンプルのブックを
 Futoji のバックアップ zip として作る。
 
 - 四隅ラベル (quads.json, ok=true) で台形補正した画像をページ本文 (WebP) にする
@@ -8,8 +8,8 @@ Futoji のバックアップ zip として作る。
 
 出力: build/store_samples/futoji_backup_promo.zip と pages/<pageId>_<photoId>.png (補正後ページ)
 端末へ:  adb push build/store_samples/futoji_backup_promo.zip /sdcard/Download/
-         → アプリの 設定 → バックアップから復元 で読み込む (私物の教材はそのまま残る)。
-撮り終えたら端末の教材を消す (ホームで長押し → 削除)。
+         → アプリの 設定 → バックアップから復元 で読み込む (私物のブックはそのまま残る)。
+撮り終えたら端末のサンプルのブックを消す (ホームで長押し → 削除)。
 """
 import io
 import json
@@ -44,7 +44,7 @@ def stroke(color, pts, width=0.007):
     return {"c": color, "w": width, "p": [v for p in pts for v in p]}
 
 
-# 教材: (id, タイトル, タグ, [写真 id], {ページ番号: [strokes]})。先頭ほど新しい教材になる
+# ブック: (id, タイトル, タグ, [写真 id], {ページ番号: [strokes]})。先頭ほど新しいブックになる
 DOCS = [
     ("promo_piano", "ピアノ教本 1", ["ピアノ"], ["0003", "0004", "0007", "0073", "0005"],
      {0: [stroke(RED, ellipse(0.62, 0.33, 0.16, 0.05)),

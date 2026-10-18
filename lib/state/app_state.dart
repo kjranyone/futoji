@@ -10,7 +10,7 @@ import '../services/ids.dart';
 import '../services/image_pipeline.dart';
 import '../services/storage.dart';
 
-/// アプリ全体の状態 (教材・ページの CRUD)。
+/// アプリ全体の状態 (ブック・ページの CRUD)。
 class AppState extends ChangeNotifier {
   final Map<String, List<MusicPage>> _pagesCache = <String, List<MusicPage>>{};
 
@@ -52,7 +52,7 @@ class AppState extends ChangeNotifier {
 
   // -------------------------------------------------------------- documents
 
-  /// 0 ページの空教材を起動時に掃除する
+  /// 0 ページの空のブックを起動時に掃除する
   /// (カメラ起動中に強制終了/クラッシュした場合の残骸防止)。
   Future<void> cleanupEmptyDocuments() async {
     final empties = DbService.documents.values
@@ -91,7 +91,7 @@ class AppState extends ChangeNotifier {
     final now = DateTime.now().millisecondsSinceEpoch;
     final doc = MusicDocument(
       id: newId(),
-      title: '無題の教材',
+      title: kUntitledBookTitle,
       createdAt: now,
       updatedAt: now,
     );
@@ -241,7 +241,7 @@ class AppState extends ChangeNotifier {
     await saveStrokes(page);
   }
 
-  /// 教材タグを保存する (Index 検索の対象)。
+  /// ブックのタグを保存する (Index 検索の対象)。
   Future<void> setDocumentTags(MusicDocument doc, List<String> tags) async {
     doc.tags = tags
         .map((t) => t.trim())

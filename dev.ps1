@@ -157,7 +157,7 @@ function Get-TargetPlatform([string]$id) {
 }
 
 # 端末の版より古い versionCode で入れると、インストールが失敗し、
-# flutter run はアプリをアンインストールして入れ直す (= 端末内の教材データが消える)。
+# flutter run はアプリをアンインストールして入れ直す (= 端末内のブックのデータが消える)。
 # ビルド前にこれを検出して止める。対処は pubspec.yaml の +ビルド番号 を上げること。
 function Assert-NoDowngrade([string]$id) {
     $installed = Get-InstalledVersionCode $id

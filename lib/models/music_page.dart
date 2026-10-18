@@ -1,6 +1,6 @@
 import 'stroke.dart';
 
-/// 教材の 1 ページ。画像は WebP でローカル保存し、
+/// ブックの 1 ページ。画像は WebP でローカル保存し、
 /// 手書きメモはベクトル (Stroke) としてこのレコードに持つ。
 class MusicPage {
   MusicPage({
@@ -19,7 +19,7 @@ class MusicPage {
   final String id;
   final String documentId;
 
-  /// 教材内の表示順 (0 起点)
+  /// ブック内の表示順 (0 起点)
   int index;
 
   /// 本文画像 (WebP) の絶対パス

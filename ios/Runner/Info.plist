@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>NSCameraUsageDescription</key>
-	<string>教材（楽譜・プリント）をスキャンするためにカメラを使用します。</string>
+	<string>楽譜やプリントをスキャンするためにカメラを使用します。</string>
 	<key>CFBundleName</key>
 	<string>futoji</string>
 	<key>CFBundlePackageType</key>

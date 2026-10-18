@@ -89,7 +89,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<bool> _confirmExport() async {
     final est = BackupService.estimate();
     if (est.pageCount == 0) {
-      showSnackBar(context, '書き出す教材がありません');
+      showSnackBar(context, '書き出すブックがありません');
       return false;
     }
     // zip はいったんアプリの一時領域に作るので、その空き容量を確認する (Android のみ取得)
@@ -112,7 +112,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text('教材 ${est.documentCount} 件・${est.pageCount} ページ'),
+            Text('ブック ${est.documentCount} 冊・${est.pageCount} ページ'),
             const SizedBox(height: 4),
             Text('予想サイズ: 約 ${formatBytes(est.bytes)}',
                 style: theme.textTheme.titleMedium),
@@ -157,7 +157,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       final size = formatBytes(await result.file.length());
       if (!mounted) return;
-      final summary = '教材 ${result.documentCount} 件・${result.pageCount} ページ・$size';
+      final summary = 'ブック ${result.documentCount} 冊・${result.pageCount} ページ・$size';
       final missing = result.missingImages > 0
           ? ' (画像が見つからない ${result.missingImages} ページは含めていません)'
           : '';
@@ -221,9 +221,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('バックアップから復元'),
-        content: const Text('バックアップ (zip) の教材を読み込みます。\n'
-            '同じ教材が端末にある場合はバックアップの内容で置き換え、'
-            'それ以外の教材はそのまま残します。'),
+        content: const Text('バックアップ (zip) のブックを読み込みます。\n'
+            '同じブックが端末にある場合はバックアップの内容で置き換え、'
+            'それ以外のブックはそのまま残します。'),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -259,7 +259,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       final skipped = result.skippedPages > 0 ? ' (${result.skippedPages} ページは画像が無く省略)' : '';
       showSnackBar(context,
-          '教材 ${result.documentCount} 件・${result.pageCount} ページを復元しました$skipped');
+          'ブック ${result.documentCount} 冊・${result.pageCount} ページを復元しました$skipped');
     } on FormatException catch (e) {
       if (!mounted) return;
       showSnackBar(context, '復元できません: ${e.message}');
@@ -292,14 +292,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ListTile(
               leading: const Icon(Icons.backup_outlined),
               title: const Text('バックアップを書き出す'),
-              subtitle: const Text('全教材 (画像・手書きメモ・タグ) を zip にまとめ、'
+              subtitle: const Text('全てのブック (画像・手書きメモ・タグ) を zip にまとめ、'
                   '端末のフォルダや Google ドライブなどに保存します'),
               onTap: _exportBackup,
             ),
             ListTile(
               leading: const Icon(Icons.restore_outlined),
               title: const Text('バックアップから復元'),
-              subtitle: const Text('書き出した zip から教材を読み込みます'),
+              subtitle: const Text('書き出した zip からブックを読み込みます'),
               onTap: _restoreBackup,
             ),
             const Divider(),

@@ -75,7 +75,7 @@ class _HomeScreenState extends State<_HomeView> {
                 controller: _searchController,
                 autofocus: true,
                 decoration: const InputDecoration(
-                  hintText: '教材名で検索',
+                  hintText: 'ブック名で検索',
                   border: InputBorder.none,
                 ),
                 onChanged: (v) => setState(() => _query = v),
@@ -116,7 +116,7 @@ class _HomeScreenState extends State<_HomeView> {
           if (docs.isEmpty) {
             return Center(
               child: Text(
-                '「$_query」に一致する教材はありません',
+                '「$_query」に一致するブックはありません',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             );
@@ -161,7 +161,7 @@ class _HomeScreenState extends State<_HomeView> {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => CameraScreen(document: doc)),
     );
-    // 1 ページも撮らずに閉じたら空の教材を残さない
+    // 1 ページも撮らずに閉じたら空のブックを残さない
     final pages = await app.pagesOf(doc.id);
     if (pages.isEmpty) {
       await app.deleteDocument(doc);
@@ -340,7 +340,7 @@ class _EmptyState extends StatelessWidget {
                 size: 72,
                 color: theme.colorScheme.primary.withValues(alpha: 0.5)),
             const SizedBox(height: 16),
-            Text('教材をスキャンして保存', style: theme.textTheme.titleMedium),
+            Text('楽譜やプリントをスキャンして保存', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
               '右下の「スキャン」から楽譜やプリントを\nカメラで読み取れます。\n紙面は自動で検出・補正され、WebPで保存されます。',

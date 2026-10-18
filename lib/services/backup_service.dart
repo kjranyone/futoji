@@ -11,15 +11,15 @@ import '../models/stroke.dart';
 import 'db_service.dart';
 import 'storage.dart';
 
-/// 全教材のバックアップ (zip) の書き出しと復元。
+/// 全てのブックのバックアップ (zip) の書き出しと復元。
 ///
 /// zip の中身:
 ///   manifest.json   形式名・版・件数・作成日時
-///   data.json       教材とページのメタデータ (手書きメモ・タグ・ページメモを含む)
+///   data.json       ブックとページのメタデータ (手書きメモ・タグ・ページメモを含む)
 ///   `images/<pageId>.webp`, `thumbs/<pageId>.webp`
 ///
 /// 画像の絶対パスは端末ごとに変わるので保存せず、復元時に AppPaths から作り直す。
-/// 復元は「同じ教材 (id) は丸ごと置き換え、それ以外の手元の教材はそのまま」のマージ。
+/// 復元は「同じブック (id) は丸ごと置き換え、それ以外の手元のブックはそのまま」のマージ。
 class BackupService {
   BackupService._();
 
@@ -57,7 +57,7 @@ class BackupService {
     );
   }
 
-  /// 全教材を zip に書き出す。[outDir] 省略時は一時ディレクトリ
+  /// 全てのブックを zip に書き出す。[outDir] 省略時は一時ディレクトリ
   /// (前回の書き出しファイルは消す)。
   static Future<BackupExportResult> export({Directory? outDir}) async {
     final docs = DbService.documents.values.toList(growable: false);
@@ -160,7 +160,7 @@ class BackupService {
     }
   }
 
-  /// 手元の同じ id の教材を消して、バックアップの内容で置き換える。
+  /// 手元の同じ id のブックを消して、バックアップの内容で置き換える。
   static Future<void> _replaceDocument(
       MusicDocument doc, List<MusicPage> pages, String staging) async {
     final old = DbService.pages.values
@@ -276,7 +276,7 @@ class BackupService {
 
   static MusicDocument _docFromMap(Map<String, dynamic> m) => MusicDocument(
         id: m['id'] as String,
-        title: m['title'] as String? ?? '無題の教材',
+        title: bookTitleFrom(m['title'] as String?),
         createdAt: (m['createdAt'] as num?)?.toInt() ?? 0,
         updatedAt: (m['updatedAt'] as num?)?.toInt() ?? 0,
         tags: <String>[

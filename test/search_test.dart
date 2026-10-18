@@ -6,7 +6,7 @@ import 'package:futoji/services/search.dart';
 
 void main() {
   MusicDocument doc({
-    String title = '無題の教材',
+    String title = '無題のブック',
     List<String> tags = const <String>[],
   }) =>
       MusicDocument(
@@ -44,14 +44,14 @@ void main() {
     });
 
     test('タグ一致', () {
-      final d = doc(title: '無題の教材', tags: <String>['音階', '発表会']);
+      final d = doc(title: '無題のブック', tags: <String>['音階', '発表会']);
       expect(DocSearch.matches(d, const <MusicPage>[], '発表会'), isTrue);
       expect(DocSearch.matches(d, const <MusicPage>[], 'コンクール'), isFalse);
     });
 
     test('ページメモ一致', () {
       final pages = <MusicPage>[page(note: '3ページ目の音階練習')];
-      final d = doc(title: '無題の教材');
+      final d = doc(title: '無題のブック');
       expect(DocSearch.matches(d, pages, '音階練習'), isTrue);
       expect(DocSearch.matches(d, const <MusicPage>[], '音階練習'), isFalse,
           reason: 'ページが無ければメモでは一致しない');
