@@ -1,7 +1,7 @@
 name: futoji
 description: 音楽教室の紙資料をスキャンして整理・閲覧するアプリ
 publish_to: 'none'
-version: 1.0.1+3001
+version: 1.0.2+3002
 
 environment:
   sdk: '>=3.13.0 <4.0.0'
