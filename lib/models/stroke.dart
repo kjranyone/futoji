@@ -15,6 +15,18 @@ class Stroke {
   /// 頂点列 (正規化座標)
   final List<Offset> points;
 
+  /// ページを 90 度回したときの同じ線 ([clockwise] なら右回り)。
+  /// [pageAspect] は回す前のページの幅 / 高さ。線幅はページ幅に対する比率なので、
+  /// 幅が変わる分だけ比率を直して太さを保つ。
+  Stroke rotated90({required bool clockwise, required double pageAspect}) => Stroke(
+        color: color,
+        width: width * pageAspect,
+        points: <Offset>[
+          for (final p in points)
+            clockwise ? Offset(1 - p.dy, p.dx) : Offset(p.dy, 1 - p.dx),
+        ],
+      );
+
   Map<String, dynamic> toMap() => {
         'c': color,
         'w': width,

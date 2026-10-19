@@ -167,7 +167,7 @@ class BackupService {
         .where((p) => p.documentId == doc.id)
         .toList(growable: false);
     for (final p in old) {
-      await AppPaths.deletePageFiles(p.id);
+      await AppPaths.deletePageFiles(p.id, alsoPaths: <String>[p.imagePath, p.thumbPath]);
     }
     await DbService.pages.deleteAll(old.map((p) => p.id));
 

@@ -113,6 +113,39 @@ void main() {
     });
   });
 
+  group('rotated90 (ページの回転)', () {
+    void expectNear(Offset a, Offset b) {
+      expect(a.dx, closeTo(b.dx, 1e-9));
+      expect(a.dy, closeTo(b.dy, 1e-9));
+    }
+
+    test('右に回すと左上は右上へ、右上は右下へ移る', () {
+      final s = line(points: const <Offset>[Offset(0, 0), Offset(1, 0), Offset(0.2, 0.7)])
+          .rotated90(clockwise: true, pageAspect: 1);
+      expectNear(s.points[0], const Offset(1, 0));
+      expectNear(s.points[1], const Offset(1, 1));
+      expectNear(s.points[2], const Offset(0.3, 0.2));
+    });
+
+    test('左に回すと右回りの逆になる', () {
+      final s = line(points: const <Offset>[Offset(0.2, 0.7), Offset(0.9, 0.1)]);
+      final back = s
+          .rotated90(clockwise: true, pageAspect: 0.7)
+          .rotated90(clockwise: false, pageAspect: 1 / 0.7);
+      for (int i = 0; i < s.points.length; i++) {
+        expectNear(back.points[i], s.points[i]);
+      }
+      expect(back.width, closeTo(s.width, 1e-12));
+      expect(back.color, s.color);
+    });
+
+    test('線の太さ (px) は変わらない', () {
+      // 幅 1000 x 高さ 1414 のページ。回すと幅は 1414 になる
+      final s = line(width: 0.007).rotated90(clockwise: true, pageAspect: 1000 / 1414);
+      expect(s.width * 1414, closeTo(0.007 * 1000, 1e-9));
+    });
+  });
+
   group('snapshotStrokes (undo 用スナップショット)', () {
     test('独立したコピーを作る (要素・点列とも)', () {
       final original = <Stroke>[

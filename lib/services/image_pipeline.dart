@@ -129,6 +129,23 @@ class ImagePipeline {
       height: prepared.height,
     );
   }
+
+  /// 保存済みの WebP を [angle] 度 (右回り) 回して [dst] に書く。縮小はしない。
+  static Future<void> rotateSaved(String src, String dst, int angle,
+      {required int quality}) async {
+    final out = await FlutterImageCompress.compressAndGetFile(
+      src,
+      dst,
+      // 縮小の基準より大きくして、元の大きさのまま回す
+      minWidth: 1 << 16,
+      minHeight: 1 << 16,
+      quality: quality,
+      rotate: angle,
+      autoCorrectionAngle: false,
+      format: CompressFormat.webp,
+    );
+    if (out == null) throw StateError('ページの回転に失敗しました: $src');
+  }
 }
 
 /// 写真の EXIF にある 35mm 換算の焦点距離 (縦横比の推定に使う)。なければ null。

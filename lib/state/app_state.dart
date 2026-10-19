@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../models/crop_result.dart';
 import '../models/music_document.dart';
 import '../models/music_page.dart';
+import '../models/stroke.dart';
 import '../services/db_service.dart';
 import '../services/ids.dart';
 import '../services/image_pipeline.dart';
@@ -112,7 +113,7 @@ class AppState extends ChangeNotifier {
   Future<void> deleteDocument(MusicDocument doc) async {
     final pages = await pagesOf(doc.id);
     for (final p in pages) {
-      await AppPaths.deletePageFiles(p.id);
+      await AppPaths.deletePageFiles(p.id, alsoPaths: <String>[p.imagePath, p.thumbPath]);
     }
     await DbService.pages.deleteAll(pages.map((p) => p.id));
     await DbService.documents.delete(doc.id);
@@ -252,8 +253,51 @@ class AppState extends ChangeNotifier {
     await refreshDocuments();
   }
 
+  /// ページを 90 度回す ([clockwise] なら右回り)。本文とサムネイルを回して書き直し、
+  /// 手書きメモも同じように回す。
+  Future<void> rotatePage(MusicPage page, {required bool clockwise}) async {
+    final rev = DateTime.now().millisecondsSinceEpoch;
+    final angle = clockwise ? 90 : 270;
+    final oldImage = page.imagePath;
+    final oldThumb = page.thumbPath;
+    final image = AppPaths.imagePathFor(page.id, rev);
+    final thumb = AppPaths.thumbPathFor(page.id, rev);
+    await ImagePipeline.rotateSaved(oldImage, image, angle, quality: 84);
+    if (oldThumb.isNotEmpty) {
+      await ImagePipeline.rotateSaved(oldThumb, thumb, angle, quality: 80);
+    }
+
+    final aspect = page.width > 0 && page.height > 0 ? page.width / page.height : 1.0;
+    page
+      ..strokes = <Stroke>[
+        for (final s in page.strokes) s.rotated90(clockwise: clockwise, pageAspect: aspect)
+      ]
+      ..imagePath = image
+      ..thumbPath = oldThumb.isEmpty ? '' : thumb
+      ..width = page.height
+      ..height = page.width
+      ..updatedAt = rev;
+    await DbService.pages.put(page.id, page);
+
+    final doc = DbService.documents.get(page.documentId);
+    if (doc != null && doc.coverThumbPath == oldThumb) {
+      doc.coverThumbPath = page.thumbPath;
+      await DbService.documents.put(doc.id, doc);
+    }
+    for (final path in <String>[oldImage, oldThumb]) {
+      if (path.isEmpty) continue;
+      try {
+        await File(path).delete();
+      } catch (_) {
+        // 消し損ねても表示・データには影響しない
+      }
+    }
+    await reloadPages(page.documentId);
+    await refreshDocuments();
+  }
+
   Future<void> deletePage(MusicPage page) async {
-    await AppPaths.deletePageFiles(page.id);
+    await AppPaths.deletePageFiles(page.id, alsoPaths: <String>[page.imagePath, page.thumbPath]);
     await DbService.pages.delete(page.id);
     final doc = DbService.documents.get(page.documentId);
     final remaining = await reloadPages(page.documentId);

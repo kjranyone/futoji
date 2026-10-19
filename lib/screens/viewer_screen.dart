@@ -147,6 +147,20 @@ class _ViewerScreenState extends State<ViewerScreen> {
     });
   }
 
+  Future<void> _rotateCurrent(List<MusicPage> pages, {required bool clockwise}) async {
+    if (pages.isEmpty) return;
+    final page = pages[_index.clamp(0, pages.length - 1)];
+    try {
+      await context.read<AppState>().rotatePage(page, clockwise: clockwise);
+    } catch (e) {
+      debugPrint('rotatePage: $e');
+      if (mounted) showSnackBar(context, 'ページを回転できませんでした');
+      return;
+    }
+    // 回す前の向きの手書きは戻せないので履歴を捨てる
+    if (mounted) setState(_undoStack.clear);
+  }
+
   /// undo 履歴 (ストロークリストのスナップショット)。ページ送りでリセット。
   final List<List<Stroke>> _undoStack = <List<Stroke>>[];
 
@@ -278,6 +292,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
                       await app.setPageNote(page, note);
                       if (mounted) setState(() {});
                     }
+                  } else if (v == 'rotate_right' || v == 'rotate_left') {
+                    _rotateCurrent(pages, clockwise: v == 'rotate_right');
                   } else if (v == 'delete') {
                     _deleteCurrent(pages);
                   }
@@ -289,6 +305,24 @@ class _ViewerScreenState extends State<ViewerScreen> {
                     child: ListTile(
                       leading: Icon(Icons.sticky_note_2_outlined),
                       title: Text('ページメモを編集'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  PopupMenuItem<String>(
+                    value: 'rotate_right',
+                    enabled: pages.isNotEmpty,
+                    child: const ListTile(
+                      leading: Icon(Icons.rotate_right),
+                      title: Text('右に回転'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  PopupMenuItem<String>(
+                    value: 'rotate_left',
+                    enabled: pages.isNotEmpty,
+                    child: const ListTile(
+                      leading: Icon(Icons.rotate_left),
+                      title: Text('左に回転'),
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),

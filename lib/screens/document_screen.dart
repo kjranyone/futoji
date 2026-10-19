@@ -94,6 +94,22 @@ class _DocumentScreenState extends State<_DocumentView> {
                 }
               },
             ),
+            for (final clockwise in const <bool>[true, false])
+              ListTile(
+                leading: Icon(clockwise ? Icons.rotate_right : Icons.rotate_left),
+                title: Text(clockwise ? '右に回転' : '左に回転'),
+                onTap: () async {
+                  Navigator.of(ctx).pop();
+                  try {
+                    await app.rotatePage(page, clockwise: clockwise);
+                  } catch (e) {
+                    debugPrint('rotatePage: $e');
+                    if (mounted) showSnackBar(context, 'ページを回転できませんでした');
+                    return;
+                  }
+                  if (mounted) setState(() {});
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.arrow_upward),
               title: const Text('前へ移動'),
