@@ -11,6 +11,17 @@
 外周の角丸・ドロップシャドウは画像に焼き込まず、ストア側の処理に任せています。
 Android の各密度のランチャー画像と iOS の既存アセットカタログ各サイズにも書き出しています。既存の Flutter アイコン画像は残し、新規ファイルを参照します。
 
+Android 8 (API 26) 以降はアダプティブアイコン (`mipmap-anydpi-v26/futoji_launcher.xml`) を使います。
+
+| 層 | ファイル | 中身 |
+| --- | --- | --- |
+| background | `values/futoji_launcher_background.xml` | 元画像の地の色 (#3C48A8)。ストア用アイコンと見た目を揃える |
+| foreground | `mipmap-*/futoji_launcher_foreground.png` | 108dp 四方の透明地に記号だけ。記号は安全領域 (直径 66dp) に収まるよう半径 31dp に縮小 |
+| monochrome | `mipmap-*/futoji_launcher_monochrome.png` | foreground と同じ形の白。Android 13 以降のテーマアイコン用 (アルファだけ使われる) |
+
+foreground と monochrome は元画像の色から記号の不透明度を抜き出して作るので、元画像を差し替えたらスクリプトを再実行するだけで揃います。
+API 25 以前は従来どおり正方形の `futoji_launcher.png` を使います。
+
 再出力（Windows PowerShell）: `./tools/export_app_icons.ps1`
 
 ## 公式仕様（2026-09-25確認）
