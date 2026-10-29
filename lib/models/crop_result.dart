@@ -8,7 +8,7 @@ class CropResult {
     required this.rotation,
     this.frameWidth,
     this.frameHeight,
-    this.sensorOrientation,
+    this.frameRotation,
   });
 
   final List<Offset> corners;
@@ -17,8 +17,9 @@ class CropResult {
   /// ライブ検出フレーム由来のコーナーである場合の情報。
   /// フレームはセンサー向きのまま配信されるため、本撮影画像 (EXIF 反映済み) と
   /// 回転・アスペクトが異なる。パイプラインがこの情報でコーナーを写像する。
+  /// frameRotation はフレームを本撮影画像の向きにする右回りの角度 (frameRotationDegrees)。
   /// 切り抜き画面で測った場合は null。
   final int? frameWidth;
   final int? frameHeight;
-  final int? sensorOrientation;
+  final int? frameRotation;
 }

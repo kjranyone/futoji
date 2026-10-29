@@ -38,6 +38,16 @@ class _CameraScreenState extends State<CameraScreen>
   int _cameraIndex = 0;
   int _sensorOrientation = 90;
   bool _frontCamera = false;
+
+  /// 画面の回転 (度)。横が基本のタブレットでは縦向きに固定しても 90 / 270 になる。
+  int _displayRotation = 0;
+
+  /// フレームをプレビュー・本撮影画像の向きにする右回りの角度。
+  int get _frameRotation => frameRotationDegrees(
+        sensorOrientation: _sensorOrientation,
+        displayRotation: _displayRotation,
+        frontFacing: _frontCamera,
+      );
   FlashMode _flash = FlashMode.off;
 
   bool _permissionDenied = false;
@@ -99,8 +109,8 @@ class _CameraScreenState extends State<CameraScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // ライブ枠の座標変換 (frameToPreview) は縦向きを前提にしているため、
-    // カメラ画面の間だけ縦向きに固定する (横持ちでは枠が 90/180 度ずれる)。
+    // 撮影中に画面が回ると、プレビュー・ライブ枠・本撮影の向きが切り替わる間に
+    // 枠がずれるため、カメラ画面の間だけ縦向きに固定する。
     SystemChrome.setPreferredOrientations(
         const <DeviceOrientation>[DeviceOrientation.portraitUp]);
     _loadNetAndStartWorker();
@@ -133,6 +143,23 @@ class _CameraScreenState extends State<CameraScreen>
     _countdownTicker.dispose();
     _countdown.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    // 縦向きへの固定が効いて画面が回ったとき
+    _refreshDisplayRotation();
+  }
+
+  static const MethodChannel _display = MethodChannel('futoji/display');
+
+  Future<void> _refreshDisplayRotation() async {
+    try {
+      _displayRotation = await _display.invokeMethod<int>('rotation') ?? 0;
+    } catch (_) {
+      // iOS など未対応の環境。縦が基本の端末として扱う
+      _displayRotation = 0;
+    }
   }
 
   @override
@@ -195,6 +222,7 @@ class _CameraScreenState extends State<CameraScreen>
       );
       await controller.initialize();
       await controller.setFlashMode(_flash);
+      await _refreshDisplayRotation();
       if (!mounted) {
         await controller.dispose();
         return;
@@ -206,6 +234,9 @@ class _CameraScreenState extends State<CameraScreen>
         _frontCamera =
             _cameras[index].lensDirection == CameraLensDirection.front;
       });
+      // 端末ごとの向きの違いを実機ログで確かめられるようにする
+      debugPrint('CameraScreen: sensor=$_sensorOrientation display=$_displayRotation '
+          'front=$_frontCamera -> frame rotation $_frameRotation');
       await _startImageStream(controller);
     } catch (e) {
       if (mounted) setState(() => _error = 'カメラを起動できませんでした: $e');
@@ -244,7 +275,7 @@ class _CameraScreenState extends State<CameraScreen>
       mapped = <Offset>[
         for (final c in corners)
           frameToPreview(
-              c, _liveFrameW, _liveFrameH, _sensorOrientation, _previewBoxAspect,
+              c, _liveFrameW, _liveFrameH, _frameRotation, _previewBoxAspect,
               mirror: _frontCamera),
       ];
     }
@@ -262,7 +293,7 @@ class _CameraScreenState extends State<CameraScreen>
             rotation: 0,
             frameWidth: _liveFrameW,
             frameHeight: _liveFrameH,
-            sensorOrientation: _sensorOrientation,
+            frameRotation: _frameRotation,
           ),
           autoQuad: mapped,
         );

@@ -87,7 +87,7 @@ class ImagePipeline {
         : <Object?>[
             liveFrame.frameWidth ?? 0,
             liveFrame.frameHeight ?? 0,
-            liveFrame.sensorOrientation ?? 0,
+            liveFrame.frameRotation ?? 0,
           ];
     // デコードは端末のデコーダで縮小しながら行う (純 Dart の全画素デコードは
     // 実機で約 11 秒かかっていた)。長辺 2600px は A4 を 300dpi よりやや粗めにした上限。
@@ -146,6 +146,34 @@ class ImagePipeline {
     );
     if (out == null) throw StateError('ページの回転に失敗しました: $src');
   }
+}
+
+/// 台形補正に渡す四隅 (画素座標、[TL,TR,BR,BL])。
+/// [corners] は切り抜き画面なら [rotationDeg] 回した画像 ([imageW] x [imageH]) 上の
+/// 正規化座標。ライブ検出の枠 ([frameW] があるとき) ならフレーム上の正規化座標なので、
+/// フレームの向き ([frameRotation]) と [rotationDeg] を合わせて回し、画像の座標へ写す。
+List<Offset> sourceQuadForSave({
+  required List<Offset> corners,
+  required int rotationDeg,
+  required int imageW,
+  required int imageH,
+  int? frameW,
+  int? frameH,
+  int? frameRotation,
+}) {
+  var normalized = corners;
+  if (frameW != null && frameH != null && frameW > 0 && frameH > 0) {
+    normalized = mapFrameCornersToImage(
+      corners: corners,
+      frameW: frameW,
+      frameH: frameH,
+      rotation: (frameRotation ?? 0) + rotationDeg,
+      imageAspect: imageW / imageH,
+    );
+  }
+  return <Offset>[
+    for (final c in normalized) Offset(c.dx * imageW, c.dy * imageH),
+  ];
 }
 
 /// 写真の EXIF にある 35mm 換算の焦点距離 (縦横比の推定に使う)。なければ null。
@@ -228,27 +256,17 @@ Future<_Prepared> _prepareScanData(img.Image decoded, List<List<double>> corners
 
     final srcW = im.width;
     final srcH = im.height;
-    // corners がライブ検出フレーム由来の場合はセンサー向き・中心クロップを補正
-    var normalized = <Offset>[
-      for (final c in corners) Offset(c[0], c[1]),
-    ];
-    if (frame != null) {
-      final fw = frame[0] as int;
-      final fh = frame[1] as int;
-      final so = frame[2] as int;
-      if (fw > 0 && fh > 0) {
-        normalized = mapFrameCornersToImage(
-          corners: normalized,
-          frameW: fw,
-          frameH: fh,
-          sensorOrientation: so,
-          imageAspect: srcW / srcH,
-        );
-      }
-    }
-    final quad = <Offset>[
-      for (final c in normalized) Offset(c.dx * srcW, c.dy * srcH),
-    ];
+    final quad = sourceQuadForSave(
+      corners: <Offset>[
+        for (final c in corners) Offset(c[0], c[1]),
+      ],
+      rotationDeg: rotationDeg,
+      imageW: srcW,
+      imageH: srcH,
+      frameW: frame?[0] as int?,
+      frameH: frame?[1] as int?,
+      frameRotation: frame?[2] as int?,
+    );
 
     // 斜めから撮っても潰れないよう、透視から紙の本来の縦横比を推定して出力サイズを決める
     final aspect = estimateQuadAspect(quad,

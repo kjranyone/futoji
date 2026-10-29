@@ -1,11 +1,11 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 
 import '../models/crop_result.dart';
 import '../models/music_document.dart';
 import '../models/music_page.dart';
-import '../models/stroke.dart';
 import '../services/db_service.dart';
 import '../services/ids.dart';
 import '../services/image_pipeline.dart';
@@ -78,7 +78,44 @@ class AppState extends ChangeNotifier {
   /// バックアップの復元などで DB を直接書き換えた後に、キャッシュを捨てて読み直す。
   Future<void> reloadAll() async {
     _pagesCache.clear();
+    await repairPageSizes();
     await refreshDocuments();
+  }
+
+  /// 縦横が同じ (正方形) と記録されたページについて、画像の実際の大きさを読んで直す。
+  /// 1.0.3〜1.0.4 でページを回すと縦横がどちらも元の高さになり、ビューア・PDF で
+  /// ページが正方形に歪んでいた (バックアップにも残っている) ための修復。
+  /// 本当に正方形のページは画像も正方形なのでそのまま。
+  Future<void> repairPageSizes({
+    Future<(int, int)?> Function(String path) readSize = _readImageSize,
+  }) async {
+    final suspects = DbService.pages.values
+        .where((p) => p.width > 0 && p.width == p.height && p.imagePath.isNotEmpty)
+        .toList(growable: false);
+    for (final page in suspects) {
+      final size = await readSize(page.imagePath);
+      if (size == null || !page.fixSize(size.$1, size.$2)) continue;
+      await DbService.pages.put(page.id, page);
+      _pagesCache.remove(page.documentId);
+    }
+  }
+
+  /// 画像ファイルのヘッダから大きさを読む (全体はデコードしない)。読めなければ null。
+  static Future<(int, int)?> _readImageSize(String path) async {
+    try {
+      final buffer = await ui.ImmutableBuffer.fromFilePath(path);
+      try {
+        final descriptor = await ui.ImageDescriptor.encoded(buffer);
+        final size = (descriptor.width, descriptor.height);
+        descriptor.dispose();
+        return size;
+      } finally {
+        buffer.dispose();
+      }
+    } catch (e) {
+      debugPrint('repairPageSizes: $path ($e)');
+      return null;
+    }
   }
 
   MusicDocument? documentById(String id) {
@@ -267,16 +304,12 @@ class AppState extends ChangeNotifier {
       await ImagePipeline.rotateSaved(oldThumb, thumb, angle, quality: 80);
     }
 
-    final aspect = page.width > 0 && page.height > 0 ? page.width / page.height : 1.0;
-    page
-      ..strokes = <Stroke>[
-        for (final s in page.strokes) s.rotated90(clockwise: clockwise, pageAspect: aspect)
-      ]
-      ..imagePath = image
-      ..thumbPath = oldThumb.isEmpty ? '' : thumb
-      ..width = page.height
-      ..height = page.width
-      ..updatedAt = rev;
+    page.rotate90(
+      clockwise: clockwise,
+      imagePath: image,
+      thumbPath: oldThumb.isEmpty ? '' : thumb,
+      updatedAt: rev,
+    );
     await DbService.pages.put(page.id, page);
 
     final doc = DbService.documents.get(page.documentId);

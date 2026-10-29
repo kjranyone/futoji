@@ -18,6 +18,7 @@ Future<void> main() async {
   await AppPaths.init();
   final appState = AppState();
   await appState.cleanupEmptyDocuments();
+  await appState.repairPageSizes();
   await appState.refreshDocuments();
   runApp(
     ChangeNotifierProvider.value(

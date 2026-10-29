@@ -181,13 +181,13 @@ void main() {
   });
 
   group('frameToPreview / mapFrameCornersToImage', () {
-    test('画面とフレームが同方向ならそのまま', () {
+    test('回転 0° でアスペクトも同じならそのまま', () {
       final n = const Offset(0.2, 0.3);
-      final out = frameToPreview(n, 640, 480, 90, 640 / 480);
+      final out = frameToPreview(n, 640, 480, 0, 640 / 480);
       expect(out, n);
     });
 
-    test('縦プレビューでは 90° 回転 (sensorOrientation=90)', () {
+    test('縦プレビューでは 90° 回転 (背面カメラ、sensorOrientation=90)', () {
       // フレーム 640x480 (横センサー) → 縦プレビューボックス (aspect 0.5625):
       // (nx, ny) → (1-ny, nx)
       final out =
@@ -196,7 +196,7 @@ void main() {
       expect(out.dy, closeTo(0.1, 1e-9));
     });
 
-    test('フロントカメラ (sensorOrientation=270) は回転後に左右反転', () {
+    test('フロントカメラ (270° 回転) は回転後に左右反転', () {
       // 回転: (nx, ny) → (ny, 1-nx)、鏡像表示なので x を反転 → (1-ny, 1-nx)
       final out = frameToPreview(
           const Offset(0.1, 0.2), 640, 480, 270, 480 / 640,
@@ -224,14 +224,47 @@ void main() {
         corners: corners,
         frameW: 640,
         frameH: 480,
-        sensorOrientation: 90,
+        rotation: 90,
         imageAspect: 480 / 640,
       );
-      // フレーム全面 → 回転後も全面になるはず
-      expect(out[0], const Offset(1, 0));
-      expect(out[1], const Offset(1, 1));
-      expect(out[2], const Offset(0, 1));
-      expect(out[3], const Offset(0, 0));
+      // フレーム全面 → 回転後も全面になり、画像の左上から並ぶ
+      expect(out[0], const Offset(0, 0));
+      expect(out[1], const Offset(1, 0));
+      expect(out[2], const Offset(1, 1));
+      expect(out[3], const Offset(0, 1));
+    });
+
+    test('mapFrameCornersToImage: 縦長の紙は画像上でも左上から [TL,TR,BR,BL] に並ぶ', () {
+      // 正立画像 (3:4) 上の縦長の紙
+      const tl = Offset(0.2, 0.1), tr = Offset(0.8, 0.1);
+      const br = Offset(0.8, 0.9), bl = Offset(0.2, 0.9);
+      // 背面カメラ (90° 回転) のフレームでは、正立画像の (x, y) が (y, 1 - x) に写る。
+      // 検出器はフレーム上の位置で [TL,TR,BR,BL] に並べる
+      Offset toFrame(Offset p) => Offset(p.dy, 1 - p.dx);
+      final frame = <Offset>[toFrame(tr), toFrame(br), toFrame(bl), toFrame(tl)];
+      expect(frame[0].dx + frame[0].dy, lessThan(frame[2].dx + frame[2].dy));
+      final out = mapFrameCornersToImage(
+        corners: frame,
+        frameW: 640,
+        frameH: 480,
+        rotation: 90,
+        imageAspect: 480 / 640,
+      );
+      for (final (i, want) in <Offset>[tl, tr, br, bl].indexed) {
+        expect(out[i].dx, closeTo(want.dx, 1e-9), reason: 'corner $i');
+        expect(out[i].dy, closeTo(want.dy, 1e-9), reason: 'corner $i');
+      }
+    });
+
+    test('startAtTopLeft: 並びを保って左上から始める', () {
+      final q = <Offset>[
+        const Offset(0.9, 0.1),
+        const Offset(0.9, 0.9),
+        const Offset(0.1, 0.9),
+        const Offset(0.1, 0.1),
+      ];
+      expect(startAtTopLeft(q), <Offset>[q[3], q[0], q[1], q[2]]);
+      expect(startAtTopLeft(<Offset>[q[3], q[0], q[1], q[2]]), <Offset>[q[3], q[0], q[1], q[2]]);
     });
 
     test('adjustCornersForAspect: 上下クロップの補正', () {

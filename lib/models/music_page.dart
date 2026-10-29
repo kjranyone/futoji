@@ -40,4 +40,35 @@ class MusicPage {
   String note;
 
   int updatedAt;
+
+  /// 90 度回したページに書き換える ([clockwise] なら右回り)。画像は回して書き直した
+  /// [imagePath] / [thumbPath] に差し替え、縦横を入れ替え、手書きメモも同じ向きに回す。
+  void rotate90({
+    required bool clockwise,
+    required String imagePath,
+    required String thumbPath,
+    required int updatedAt,
+  }) {
+    final aspect = width > 0 && height > 0 ? width / height : 1.0;
+    strokes = <Stroke>[
+      for (final s in strokes) s.rotated90(clockwise: clockwise, pageAspect: aspect)
+    ];
+    final oldWidth = width;
+    width = height;
+    height = oldWidth;
+    this.imagePath = imagePath;
+    this.thumbPath = thumbPath;
+    this.updatedAt = updatedAt;
+  }
+
+  /// 保存されている縦横 ([width] x [height]) が画像の実際の大きさと食い違っていれば直す。
+  /// 1.0.3〜1.0.4 の回転で縦横がどちらも元の高さ (正方形) になっていたページの修復用。
+  /// 直したら true。
+  bool fixSize(int actualWidth, int actualHeight) {
+    if (actualWidth <= 0 || actualHeight <= 0) return false;
+    if (width == actualWidth && height == actualHeight) return false;
+    width = actualWidth;
+    height = actualHeight;
+    return true;
+  }
 }

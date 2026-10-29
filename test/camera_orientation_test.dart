@@ -1,4 +1,4 @@
-// カメラ画面の向き固定 (ライブ枠の座標変換が縦向き前提のため) を検証する。
+// カメラ画面の向き固定 (撮影中に画面が回って枠がずれないようにする) を検証する。
 // 実機のカメラは使えないので、カメラ権限を「拒否」にして画面を開き、
 // SystemChrome.setPreferredOrientations の呼び出しを確かめる。
 import 'package:flutter/material.dart';

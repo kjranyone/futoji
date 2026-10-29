@@ -3,6 +3,8 @@ package com.kjranyone.futoji
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.view.Surface
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -17,6 +19,25 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // カメラ画面のライブ枠・自動撮影の座標変換に使う画面の回転 (度)。
+        // CameraX が本撮影とプレビューの向きを決めるのと同じ既定ディスプレイの値を返す
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "futoji/display")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "rotation") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                @Suppress("DEPRECATION")
+                val current = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else windowManager.defaultDisplay
+                result.success(
+                    when (current?.rotation) {
+                        Surface.ROTATION_90 -> 90
+                        Surface.ROTATION_180 -> 180
+                        Surface.ROTATION_270 -> 270
+                        else -> 0
+                    }
+                )
+            }
         // バックアップ zip を「保存先を選んで保存」する (SAF) と、作成前の空き容量の取得。
         // 大きなファイルをメモリに載せないよう、ネイティブ側でストリームコピーする。
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "futoji/save")

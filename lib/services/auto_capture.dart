@@ -191,58 +191,85 @@ double maxCornerDelta(List<Offset> a, List<Offset> b) {
   return m;
 }
 
-/// フレーム (センサー向き) 上の正規化コーナーを、EXIF 反映済み画像の
-/// 正規化座標へ変換する。
+/// フレーム (センサー向き) を、画面に映る向き・本撮影画像 (EXIF 反映済み) の向きに
+/// 合わせるための右回りの角度 (0 / 90 / 180 / 270)。
 ///
-/// フレームと対象画像のアスペクト比が違う場合、センサー回転 [sensorOrientation]
-/// (90 / 270) で回転を補正し、さらに中心クロップ分を伸縮する。
+/// [displayRotation] は画面の回転 (Surface.ROTATION_* を度にしたもの)。縦が基本の端末を
+/// 縦向きで使うと 0、横が基本のタブレットを縦向きで使うと 90 か 270 になる。
+/// 本撮影は CameraX が画面の回転に合わせて向きを付け、プレビューも同じ向きに回して
+/// 表示するので、どちらもこの角度になる (CameraX の CameraOrientationUtil と同じ式)。
+int frameRotationDegrees({
+  required int sensorOrientation,
+  required int displayRotation,
+  required bool frontFacing,
+}) {
+  final r = frontFacing
+      ? sensorOrientation + displayRotation
+      : sensorOrientation - displayRotation;
+  return ((r % 360) + 360) % 360;
+}
+
+/// フレーム上の正規化コーナーを、EXIF 反映済み画像の正規化座標へ変換する。
+///
+/// [rotation] ([frameRotationDegrees]) だけ右に回し、フレームと画像で写っている範囲
+/// (アスペクト比) が違えば [adjustCornersForAspect] で合わせる。
+/// 四隅はフレーム上の位置で [TL,TR,BR,BL] に並んでいるので、回したあとは
+/// 画像上の左上から始まるように並べ直す (そのままだと保存したページが回ってしまう)。
 List<Offset> mapFrameCornersToImage({
   required List<Offset> corners,
   required int frameW,
   required int frameH,
-  required int sensorOrientation,
+  required int rotation,
   required double imageAspect,
 }) {
   if (frameW <= 0 || frameH <= 0 || imageAspect <= 0) return corners;
-  final frameAspect = frameW / frameH;
-  final rotated = (frameAspect - imageAspect).abs() / imageAspect > 0.02;
-  List<Offset> mapped = corners;
-  double mappedAspect = frameAspect;
-  if (rotated) {
-    mapped = <Offset>[
-      for (final c in corners) _rotateNormalized(c, sensorOrientation),
-    ];
-    mappedAspect = 1 / frameAspect;
-  }
-  return adjustCornersForAspect(mapped, mappedAspect, imageAspect);
+  final quarter = rotation % 180 != 0;
+  final mapped = startAtTopLeft(<Offset>[
+    for (final c in corners) _rotateNormalized(c, rotation),
+  ]);
+  final mappedAspect = quarter ? frameH / frameW : frameW / frameH;
+  // フレームはセンサーの向き (横長) なので、回したあとはセンサーも縦長になる
+  return adjustCornersForAspect(mapped, mappedAspect, imageAspect,
+      sensorAspect: quarter ? 1 / kSensorAspect : kSensorAspect);
 }
 
-/// 単点の回転補正。
-Offset _rotateNormalized(Offset n, int sensorOrientation) {
-  switch (sensorOrientation) {
+/// 四隅の並び (回り方) を保ったまま、左上 (x + y が最小) の点が先頭になるよう巡回させる。
+List<Offset> startAtTopLeft(List<Offset> corners) {
+  if (corners.length < 2) return corners;
+  var start = 0;
+  for (int i = 1; i < corners.length; i++) {
+    final c = corners[i];
+    final s = corners[start];
+    if (c.dx + c.dy < s.dx + s.dy) start = i;
+  }
+  return <Offset>[
+    for (int i = 0; i < corners.length; i++) corners[(start + i) % corners.length],
+  ];
+}
+
+/// 正規化座標の点を、画像ごと右に [degrees] 度回したときの位置。
+Offset _rotateNormalized(Offset n, int degrees) {
+  switch (((degrees % 360) + 360) % 360) {
     case 90:
       return Offset(1 - n.dy, n.dx);
-    case 270:
-      return Offset(n.dy, 1 - n.dx);
     case 180:
       return Offset(1 - n.dx, 1 - n.dy);
-    case 0:
+    case 270:
+      return Offset(n.dy, 1 - n.dx);
     default:
       return n;
   }
 }
 
 /// カメラフレーム上の正規化コーナーをプレビュー表示上の正規化座標へ変換する。
-/// [previewBoxAspect] はオーバーレイを重ねるプレビューボックスのアスペクト比。
-///
-/// 前提: カメラ画面は縦向き固定 (CameraScreen が SystemChrome で固定する)。
-/// 端末の回転を考慮しないため、横持ちでは正しくない。
-/// [mirror] はフロントカメラ用: プレビューが鏡像表示なので左右を反転する。
+/// [rotation] は [frameRotationDegrees]、[previewBoxAspect] はオーバーレイを重ねる
+/// プレビューボックスのアスペクト比。
+/// [mirror] はフロントカメラ用: プレビューが鏡像表示なので、回したあと左右を反転する。
 Offset frameToPreview(
   Offset n,
   int frameW,
   int frameH,
-  int sensorOrientation,
+  int rotation,
   double previewBoxAspect, {
   bool mirror = false,
 }) {
@@ -250,37 +277,42 @@ Offset frameToPreview(
     corners: <Offset>[n],
     frameW: frameW,
     frameH: frameH,
-    sensorOrientation: sensorOrientation,
+    rotation: rotation,
     imageAspect: previewBoxAspect,
   ).first;
   return mirror ? Offset(1 - mapped.dx, mapped.dy) : mapped;
 }
 
-/// ストリーム (プレビュー) の座標系で測ったコーナーを、
-/// 本撮影画像の座標系へ変換する (中心クロップ分の補正)。
+/// センサー全体のアスペクト比 (横長)。CameraX の既定と同じく 4:3 とみなす。
+const double kSensorAspect = 4 / 3;
+
+/// 同じセンサーから取った別のストリーム (アスペクト比 [sourceAspect]) で測った
+/// 正規化座標を、ストリーム [targetAspect] の正規化座標へ変換する。
+/// [sensorAspect] を含め、アスペクト比はすべて同じ座標の向きで渡す
+/// (回して縦にした座標なら、センサーも縦長の 3/4)。
 ///
-/// ストリームと本撮影でアスペクト比が違う場合、狭い側がクロップされているので
-/// 伸縮させて一致させる。アスペクト比がほぼ同じならそのまま。
+/// どちらのストリームもセンサー全体からその比率で最大の範囲を中央で切り出したものと
+/// みなす。センサーより横長のストリームは上下が、縦長のストリームは左右が削られる
+/// (4:3 のセンサーなら 16:9 は上下が削られる)。範囲外の点は 0..1 の外に出る。
+/// アスペクト比がほぼ同じならそのまま返す。
 List<Offset> adjustCornersForAspect(
   List<Offset> corners,
   double sourceAspect,
-  double targetAspect,
-) {
-  if (sourceAspect <= 0 || targetAspect <= 0) return corners;
+  double targetAspect, {
+  double sensorAspect = kSensorAspect,
+}) {
+  if (sourceAspect <= 0 || targetAspect <= 0 || sensorAspect <= 0) return corners;
   if ((sourceAspect - targetAspect).abs() / targetAspect < 0.02) {
     return corners;
   }
-  if (sourceAspect > targetAspect) {
-    // ストリームの方が横長 → 上下がクロップされている
-    final c = (1 - targetAspect / sourceAspect) / 2;
-    return <Offset>[
-      for (final p in corners) Offset(p.dx, c + p.dy * (1 - 2 * c)),
-    ];
-  }
-  // ストリームの方が縦長 → 左右がクロップされている
-  final c = (1 - sourceAspect / targetAspect) / 2;
+  // センサー全体を 1 としたときに、ストリームが写している幅と高さ
+  double spanW(double a) => math.min(1, a / sensorAspect);
+  double spanH(double a) => math.min(1, sensorAspect / a);
+  final sx = spanW(sourceAspect) / spanW(targetAspect);
+  final sy = spanH(sourceAspect) / spanH(targetAspect);
   return <Offset>[
-    for (final p in corners) Offset(c + p.dx * (1 - 2 * c), p.dy),
+    for (final p in corners)
+      Offset(0.5 + (p.dx - 0.5) * sx, 0.5 + (p.dy - 0.5) * sy),
   ];
 }
 
