@@ -37,6 +37,42 @@ class DocumentDetector {
   /// 紙マスクがこの割合を超えたら「全面 = 紙なし (判定不能)」とみなす。
   static const double maxPaperMaskFraction = 0.99;
 
+  /// 紙マスクと、そこから当てはめた四角形の IoU がこれ未満なら「紙なし」とみなす。
+  /// 紙のマスクはほぼ四角形を埋めるが、絵や柄を紙と取り違えたマスクはまだらで、
+  /// 四角形の一部しか埋めない。全評価セット・両経路で紙ありは最低 0.787 (アプリの実写は
+  /// 0.869)、紙なしの誤検出 (エッチング) は 0.500 だった (docs/IMAGE_RECOGNITION_RESEARCH.md)。
+  static const double netMinMaskQuadIoU = 0.7;
+
+  /// マスク [mask] (w x h、0 以外が前景) と正規化座標の四角形 [quad] の IoU (画素中心で判定)。
+  static double maskQuadIoU(Uint8List mask, int w, int h, List<Offset> quad) {
+    final px = <double>[for (final c in quad) c.dx * w];
+    final py = <double>[for (final c in quad) c.dy * h];
+    // 四角形の回り方 (どちら向きでも内側を判定できるように)
+    var area = 0.0;
+    for (int i = 0; i < 4; i++) {
+      final j = (i + 1) % 4;
+      area += px[i] * py[j] - px[j] * py[i];
+    }
+    final sign = area >= 0 ? 1.0 : -1.0;
+    var inter = 0, union = 0;
+    for (int y = 0; y < h; y++) {
+      final cy = y + 0.5;
+      for (int x = 0; x < w; x++) {
+        final cx = x + 0.5;
+        var inside = true;
+        for (int i = 0; i < 4 && inside; i++) {
+          final j = (i + 1) % 4;
+          final cross = (px[j] - px[i]) * (cy - py[i]) - (py[j] - py[i]) * (cx - px[i]);
+          if (cross * sign < 0) inside = false;
+        }
+        final m = mask[y * w + x] != 0;
+        if (inside && m) inter++;
+        if (inside || m) union++;
+      }
+    }
+    return union == 0 ? 0 : inter / union;
+  }
+
   /// マスク画素数 [maskSum] / 全画素数 [total] が紙として妥当な範囲か。
   static bool isPlausiblePaperMask(int maskSum, int total) =>
       maskSum >= total * minPaperMaskFraction &&
@@ -119,6 +155,18 @@ class DocumentDetector {
     for (int i = 0; i < w * h; i++) {
       // 外周から到達できなかった 0 領域 (= 穴) は前景にする
       out[i] = background[i] == 2 ? 0 : 255;
+    }
+    return out;
+  }
+
+  /// 1 画素 [channels] バイト (3: RGB、4: RGBA) の画素列を輝度配列にする
+  /// ([toGray] と同じ BT.601)。灰色 (1) ならそのまま返す。
+  static Uint8List lumaOf(Uint8List pixels, int channels) {
+    if (channels == 1) return pixels;
+    final n = pixels.length ~/ channels;
+    final out = Uint8List(n);
+    for (int i = 0, j = 0; i < n; i++, j += channels) {
+      out[i] = (pixels[j] * 299 + pixels[j + 1] * 587 + pixels[j + 2] * 114) ~/ 1000;
     }
     return out;
   }
@@ -714,25 +762,101 @@ class DocumentDetector {
     }
 
     // 辺ごとの直線 (点 + 単位方向)。null なら元の辺を使う。
+    //
+    // まず元の辺 (凸包の辺) から 3% 以内の境界画素で当てはめる。重なった紙で紙の一部が
+    // 欠けたマスクでも、見えている本当の辺が使われる。
+    // 元の辺の近くに十分な画素がなく、しかも辺の端 (凸包の角) が画像の縁にあるときは、
+    // マスクが角で机へ塊になってはみ出し、画像の縁まで達している (紙の外の明るい机が縁まで
+    // 続く場面。実機 2026-10-30)。本当の紙の辺は内側にあるので、内へ 15% までの境界画素から、
+    // 2 点を通る直線のうち 2 画素以内の画素が最も多いもの (決定的な RANSAC) を選ぶ。
+    // 角が縁にないときは探さない: 重なった紙で欠けたマスクでは、内側の直線は上の紙の縁で
+    // あり、本当の辺ではない (評価の hard_0167)。
+    bool onBorder(Point<double> p) =>
+        p.x <= 1 || p.y <= 1 || p.x >= w - 2 || p.y >= h - 2;
     final lines = <(Offset, Offset)?>[];
     for (int e = 0; e < 4; e++) {
       final a = q[e];
       final b = q[(e + 1) % 4];
       final len = a.distanceTo(b);
-      var ux = (b.x - a.x) / len;
-      var uy = (b.y - a.y) / len;
-      var ox = a.x, oy = a.y; // 直線上の点
-      var tol = math.max(3.0, len * 0.03);
+      final ex = (b.x - a.x) / len, ey = (b.y - a.y) / len;
+      // 内向き (重心側) の法線
+      var inx = -ey, iny = ex;
+      if (inx * (cx - a.x) + iny * (cy - a.y) < 0) {
+        inx = -inx;
+        iny = -iny;
+      }
+      final outTol = math.max(3.0, len * 0.03);
+      final inTol = math.max(3.0, len * 0.15);
+      final cand = <(double, Point<double>)>[];
+      for (final p in boundary) {
+        final dx = p.x - a.x, dy = p.y - a.y;
+        final t = dx * ex + dy * ey;
+        if (t < len * 0.1 || t > len * 0.9) continue;
+        final d = dx * inx + dy * iny;
+        if (d < -outTol || d > inTol) continue;
+        cand.add((t, p));
+      }
+      final minPts = math.max(8, len * 0.2);
+      if (cand.length < minPts) {
+        lines.add(null);
+        continue;
+      }
+      cand.sort((p, q) => p.$1.compareTo(q.$1));
+      final pts = <Point<double>>[for (final c in cand) c.$2];
+      var nearHull = 0;
+      for (final p in pts) {
+        if (((p.x - a.x) * -ey + (p.y - a.y) * ex).abs() <= outTol) nearHull++;
+      }
+      int countNear(double ox, double oy, double ux, double uy) {
+        var n = 0;
+        for (final p in pts) {
+          if (((p.x - ox) * -uy + (p.y - oy) * ux).abs() <= 2.0) n++;
+        }
+        return n;
+      }
+
+      var ox = a.x, oy = a.y, ux = ex, uy = ey;
+      var tol = outTol;
+      if (nearHull < minPts) {
+      if (!onBorder(a) && !onBorder(b)) {
+        lines.add(null);
+        continue;
+      }
+      // 辺に沿って等間隔に選んだ点の組から、最も多くの候補が乗る直線を探す
+      final m = math.min(24, pts.length);
+      final picks = <Point<double>>[
+        for (int i = 0; i < m; i++) pts[(i * (pts.length - 1) / (m - 1)).round()],
+      ];
+      var bestN = -1;
+      for (int i = 0; i < m; i++) {
+        for (int j = i + 1; j < m; j++) {
+          final pi = picks[i], pj = picks[j];
+          final d = pi.distanceTo(pj);
+          if (d < len * 0.2) continue;
+          final vx = (pj.x - pi.x) / d, vy = (pj.y - pi.y) / d;
+          final n = countNear(pi.x, pi.y, vx, vy);
+          if (n > bestN) {
+            bestN = n;
+            ox = pi.x;
+            oy = pi.y;
+            ux = vx;
+            uy = vy;
+          }
+        }
+      }
+      if (bestN < minPts) {
+        lines.add(null);
+        continue;
+      }
+      tol = 2.0;
+      }
+      // 直線の近くの候補で全最小二乗をやり直す (初回は元の辺から 3% 以内、以降 2 画素以内)
       var ok = false;
       for (int iter = 0; iter < 3; iter++) {
         double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
         int n = 0;
-        for (final p in boundary) {
-          final dx = p.x - a.x, dy = p.y - a.y;
-          final t = dx * (b.x - a.x) / len + dy * (b.y - a.y) / len;
-          if (t < len * 0.1 || t > len * 0.9) continue;
-          final dist = (p.x - ox) * -uy + (p.y - oy) * ux;
-          if (dist.abs() > tol) continue;
+        for (final p in pts) {
+          if (((p.x - ox) * -uy + (p.y - oy) * ux).abs() > tol) continue;
           sx += p.x;
           sy += p.y;
           sxx += p.x * p.x;
@@ -740,10 +864,8 @@ class DocumentDetector {
           sxy += p.x * p.y;
           n++;
         }
-        if (n < math.max(8, len * 0.2)) {
-          ok = false;
-          break;
-        }
+        if (n < minPts) break;
+        ok = true;
         final mx = sx / n, my = sy / n;
         final cxx = sxx / n - mx * mx;
         final cyy = syy / n - my * my;
@@ -760,7 +882,6 @@ class DocumentDetector {
         ox = mx;
         oy = my;
         tol = 2.0;
-        ok = true;
       }
       if (!ok) {
         lines.add(null);
@@ -778,7 +899,25 @@ class DocumentDetector {
 
     // 戻り値は連続座標 (画素 i は [i, i+1] を覆う) にする。画素中心の添字に
     // 0.5 を足すと、正規化 (÷w) したときに画像の端が 0 と 1 に一致する。
+    // 当てはめた角が元の角から外へ動くのは 5% まで (当てはめの失敗を防ぐ)。内側 (元の四角形の
+    // 中) へは 25% まで認める: はみ出した塊は凸包を外へ広げるだけなので、本当の角は内側にある。
     final maxMove = math.min(w, h) * 0.05;
+    final maxInward = math.min(w, h) * 0.25;
+    bool insideQuad(Point<double> p) {
+      var sign = 0.0;
+      for (int i = 0; i < 4; i++) {
+        final a = q[i], b = q[(i + 1) % 4];
+        final c = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+        if (c.abs() < 1e-9) continue;
+        if (sign == 0) {
+          sign = c.sign;
+        } else if (c.sign != sign) {
+          return false;
+        }
+      }
+      return true;
+    }
+
     return <Point<double>>[
       for (int i = 0; i < 4; i++)
         () {
@@ -790,7 +929,8 @@ class DocumentDetector {
               : _lineIntersect(prev.$1, prev.$2, cur.$1, cur.$2);
           if (ip != null) {
             final fit = Point<double>(ip.dx, ip.dy);
-            if (fit.distanceTo(q[i]) <= maxMove) p = fit;
+            final move = fit.distanceTo(q[i]);
+            if (move <= maxMove || (move <= maxInward && insideQuad(fit))) p = fit;
           }
           return Point<double>((p.x + 0.5).clamp(0.0, w.toDouble()),
               (p.y + 0.5).clamp(0.0, h.toDouble()));

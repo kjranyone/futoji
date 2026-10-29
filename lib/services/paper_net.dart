@@ -12,7 +12,8 @@ import 'ort_ffi.dart';
 ///
 /// 推論は dart:ffi で ORT の C API を直接叩く (Java/JNI を経由しない)。
 /// flutter_onnxruntime の Java 層はリリースビルドで JNI クラッシュするため置き換え。
-/// モデルは assets/models/paper_seg.onnx、入出力とも 1x1x256x256 の float32。
+/// モデルは assets/models/paper_seg.onnx。入力は 1x3x256x256 (RGB) か 1x1x256x256 (灰色)、
+/// 出力は 1x1x256x256 の float32。
 /// モデル不在・読み込み失敗時は [available] が false になり、
 /// 呼び出し側は検出失敗 (紙なし) として扱う。
 class PaperNet {
@@ -45,16 +46,18 @@ class PaperNet {
       await OrtApiBindings.preparePlatform();
       final bytes = (await rootBundle.load(_assetPath)).buffer.asUint8List();
       // FFI セッション生成はどの isolate でも可。ここはメイン isolate。
-      _bundle = OrtApiBindings.createSessionBundle(bytes);
+      _bundle = OrtApiBindings.createPaperSessionBundle(bytes);
     } catch (e) {
       debugPrint('PaperNet: model unavailable ($e)');
       _failed = true;
     }
   }
 
-  /// 輝度画像から紙面の四隅 (正規化座標 [TL,TR,BR,BL]) を推論する。
+  /// 画像から紙面の四隅 (正規化座標 [TL,TR,BR,BL]) を推論する。
+  /// [pixels] は 1 画素 [channels] バイト (1: 灰色、3: RGB、4: RGBA) の画素列。
   /// 使えない場合・推論失敗時は null (呼び出し側は検出失敗として扱う)。
-  static Future<List<Offset>?> detectQuad(Uint8List gray, int w, int h) async {
+  static Future<List<Offset>?> detectQuad(Uint8List pixels, int w, int h,
+      {int channels = 1}) async {
     await ensureLoaded();
     final bundle = _bundle;
     if (bundle == null || w <= 0 || h <= 0) return null;
@@ -63,9 +66,10 @@ class PaperNet {
       // 推論本体は OrtSessionBundle.detectPaperQuad (ライブ検出・評価ハーネスと共通)
       double fill = 0;
       final flat = bundle.detectPaperQuad(
-        gray,
+        pixels,
         w,
         h,
+        channels: channels,
         onDebug: kDebugMode
             ? (input, mask, filled, f) {
                 fill = f;

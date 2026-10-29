@@ -39,6 +39,8 @@ class _CameraScreenState extends State<CameraScreen>
   int _sensorOrientation = 90;
   bool _frontCamera = false;
 
+  bool _loggedFrameFormat = false;
+
   /// 画面の回転 (度)。横が基本のタブレットでは縦向きに固定しても 90 / 270 になる。
   int _displayRotation = 0;
 
@@ -253,7 +255,7 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
-  /// 画像ストリーム: Y 平面を抽出しワーカーへ依頼 (約 150ms 間隔)。
+  /// 画像ストリーム: 間引いた画素 (色が取れれば RGB) をワーカーへ依頼 (約 150ms 間隔)。
   void _onCameraFrame(CameraImage image) {
     final now = DateTime.now();
     if (now.difference(_lastFrameAt).inMilliseconds < 150) return;
@@ -264,8 +266,14 @@ class _CameraScreenState extends State<CameraScreen>
       _liveFrameH = image.height;
     }
     final decimate = image.width >= 1280 ? 4 : 2;
-    final (gray, dw, dh) = extractGrayPlane(image, decimate: decimate);
-    _worker.submit(gray, dw, dh, _onLiveResult);
+    final (pixels, dw, dh, channels) = extractFramePixels(image, decimate: decimate);
+    if (!_loggedFrameFormat) {
+      _loggedFrameFormat = true;
+      // 端末ごとのフレーム形式 (色が取れているか) を実機ログで確かめられるようにする
+      debugPrint('CameraScreen: frame ${image.width}x${image.height} '
+          '${image.format.group.name} planes=${image.planes.length} -> ${channels}ch');
+    }
+    _worker.submit(pixels, dw, dh, _onLiveResult, channels: channels);
   }
 
   void _onLiveResult(List<Offset>? corners) {

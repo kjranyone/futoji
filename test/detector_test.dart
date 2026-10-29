@@ -324,4 +324,105 @@ void main() {
     expect(refined, lessThan(1.0));
     expect(refined, lessThan(maxErr(false)));
   });
+
+  test('辺の直線当てはめ: 角のはみ出し (机への塊) に引っ張られない', () {
+    // 実機 (2026-10-30): 紙の左上の机へマスクが塊ではみ出し、凸包の頂点が画面の端まで飛んだ。
+    // 補正で求めた角が元の角から 5% 以上離れると捨てていたため、はみ出した角が残っていた
+    const w = 256, h = 256;
+    const truth = <Offset>[
+      Offset(48.0, 22.0),
+      Offset(214.0, 18.0),
+      Offset(222.0, 236.0),
+      Offset(60.0, 240.0),
+    ];
+    bool inside(double x, double y) {
+      for (int i = 0; i < 4; i++) {
+        final a = truth[i], b = truth[(i + 1) % 4];
+        if ((b.dx - a.dx) * (y - a.dy) - (b.dy - a.dy) * (x - a.dx) < 0) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    final mask = Uint8List(w * h);
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        // 紙 + 左上の机の塊 (画面の左端から紙まで、上から 60 画素)
+        final blob = x < 52 && y >= 14 && y < 14 + 60 - x ~/ 2;
+        if (inside(x + 0.5, y + 0.5) || blob) mask[y * w + x] = 255;
+      }
+    }
+    final q = DocumentDetector.detectLuminance(mask, w, h,
+        workWidth: w, paperChecks: false, pad: 0)!;
+    for (int i = 0; i < 4; i++) {
+      final err = (Offset(q[i].dx * w, q[i].dy * h) - truth[i]).distance;
+      expect(err, lessThan(3.0), reason: '角 $i: ${q[i] * w.toDouble()} (正解 ${truth[i]})');
+    }
+  });
+
+  test('辺の直線当てはめ: 上に重なった紙で欠けたマスクでも、見えている本当の辺を使う', () {
+    // 評価の難例 (hard_0167): 紙の上の端に別の紙が斜めに重なり、マスクが欠ける。正解は隠れた
+    // 部分も含めた紙全体。欠けの縁 (内側の直線) を辺と取り違えると角が内側へずれる
+    const w = 256, h = 256;
+    const truth = <Offset>[
+      Offset(30.0, 30.0),
+      Offset(226.0, 34.0),
+      Offset(220.0, 230.0),
+      Offset(26.0, 226.0),
+    ];
+    bool inside(double x, double y) {
+      for (int i = 0; i < 4; i++) {
+        final a = truth[i], b = truth[(i + 1) % 4];
+        if ((b.dx - a.dx) * (y - a.dy) - (b.dy - a.dy) * (x - a.dx) < 0) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    final mask = Uint8List(w * h);
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        // 左 2/3 の上の端を、左で 30 画素・右で 10 画素の高さの紙が隠す
+        final hidden = x < 160 && y < 60 - x * 20 ~/ 160;
+        if (inside(x + 0.5, y + 0.5) && !hidden) mask[y * w + x] = 255;
+      }
+    }
+    final q = DocumentDetector.detectLuminance(mask, w, h,
+        workWidth: w, paperChecks: false, pad: 0)!;
+    // 隠れていない 3 つの角は、欠けの縁 (20 画素ほど内側) ではなく本当の辺の近くにある
+    // (見えている上の辺は短いので、当てはめの誤差は数画素ある)
+    for (final i in <int>[1, 2, 3]) {
+      final err = (Offset(q[i].dx * w, q[i].dy * h) - truth[i]).distance;
+      expect(err, lessThan(6.0), reason: '角 $i: ${q[i] * w.toDouble()} (正解 ${truth[i]})');
+    }
+  });
+
+  group('maskQuadIoU (マスクと四角形の一致度)', () {
+    const w = 100, h = 80;
+    Uint8List rectMask(int x0, int y0, int x1, int y1) {
+      final m = Uint8List(w * h);
+      for (int y = y0; y < y1; y++) {
+        for (int x = x0; x < x1; x++) {
+          m[y * w + x] = 255;
+        }
+      }
+      return m;
+    }
+
+    const quad = <Offset>[Offset(0.2, 0.25), Offset(0.8, 0.25), Offset(0.8, 0.75), Offset(0.2, 0.75)];
+
+    test('四角形を埋めるマスクは 1、半分しか埋めないマスクは 0.5', () {
+      expect(DocumentDetector.maskQuadIoU(rectMask(20, 20, 80, 60), w, h, quad), closeTo(1.0, 1e-9));
+      expect(DocumentDetector.maskQuadIoU(rectMask(20, 20, 50, 60), w, h, quad), closeTo(0.5, 1e-9));
+    });
+
+    test('四角形の回り方 (右回り・左回り) によらない', () {
+      final reversed = quad.reversed.toList();
+      final m = rectMask(30, 30, 70, 50);
+      expect(DocumentDetector.maskQuadIoU(m, w, h, reversed),
+          closeTo(DocumentDetector.maskQuadIoU(m, w, h, quad), 1e-12));
+    });
+  });
 }

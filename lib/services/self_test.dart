@@ -11,7 +11,6 @@ import 'package:image/image.dart' as img;
 import 'ai_sharpen.dart';
 import 'db_service.dart';
 import 'detection_worker.dart';
-import 'detector.dart';
 import 'fast_decode.dart';
 import 'image_pipeline.dart';
 import 'ort_ffi.dart';
@@ -123,8 +122,8 @@ class SelfTest {
           apiBaseAddress: apiBase, tileSize: tileSize));
 
   /// クロージャがこの関数の変数 (DetectionWorker など送れない物) を拾わないよう分ける。
-  static Future<Uint8List> _grayInIsolate(img.Image im) =>
-      Isolate.run(() => DocumentDetector.toGray(im));
+  static Future<Uint8List> _rgbInIsolate(img.Image im) =>
+      Isolate.run(() => im.getBytes(order: img.ChannelOrder.rgb));
 
   static Future<void> _run(Directory dir) async {
     _log('START ${dir.path}');
@@ -151,12 +150,12 @@ class SelfTest {
       final decodeWatch = Stopwatch()..start();
       final work = await decodeWorkImage(bytes); // 切り抜き画面と同じ
       final decodeMs = decodeWatch.elapsedMilliseconds;
-      final gray = await _grayInIsolate(work);
+      final rgb = await _rgbInIsolate(work);
       final w = work.width;
       final h = work.height;
 
       final cropWatch = Stopwatch()..start();
-      final crop = await PaperNet.detectQuad(gray, w, h);
+      final crop = await PaperNet.detectQuad(rgb, w, h, channels: 3);
       final cropMs = cropWatch.elapsedMilliseconds;
 
       final workerWatch = Stopwatch()..start();
@@ -164,7 +163,7 @@ class SelfTest {
       // 前の依頼が処理中なら空くまで待つ (空かなければワーカー不具合として記録)
       var accepted = false;
       for (int i = 0; i < 500 && !accepted; i++) {
-        accepted = worker.submit(gray, w, h, completer.complete);
+        accepted = worker.submit(rgb, w, h, completer.complete, channels: 3);
         if (!accepted) await Future<void>.delayed(const Duration(milliseconds: 10));
       }
       List<Offset>? live;

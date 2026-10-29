@@ -70,6 +70,9 @@ void main() {
       'PAPER_OPEN', DocumentDetector.netMaskOpenRadius.toString()));
   // 実験用: 0 なら辺の直線当てはめ (角の補正) を無効にして評価する
   final refineEdges = _env('PAPER_REFINE', '1') == '1';
+  // マスクと四角形の IoU の下限 (既定はアプリと同じ値)
+  final minAgree = double.parse(
+      _env('PAPER_MIN_AGREE', DocumentDetector.netMinMaskQuadIoU.toString()));
 
   final labelFiles = evalDir.existsSync()
       ? (evalDir
@@ -93,7 +96,7 @@ void main() {
   test('paper net eval on labeled captures',
       skip: skipReason ?? false,
       timeout: const Timeout(Duration(minutes: 20)), () async {
-    final bundle = OrtApiBindings.createSessionBundle(
+    final bundle = OrtApiBindings.createPaperSessionBundle(
       modelFile.readAsBytesSync(),
       libraryPath: File(ortPath).absolute.path,
     );
@@ -113,13 +116,23 @@ void main() {
       // 切り抜き画面と同じデコード (fast_decode.dart)。image パッケージで縮小すると
       // 縮小方式の違いで折れのある画像などの結果が実機とずれていた
       final work = await decodeWorkImage(imageFile.readAsBytesSync());
-      // PAPER_SIM_STREAM=1: ライブ検出の入力を再現する (長辺 1920 のフレームの
-      // Y 平面を extractGrayPlane と同じく 4 画素おきに間引く → 長辺 480)。
-      final (gray, gw, gh) =
-          simStream ? _streamGray(imageFile.readAsBytesSync()) : (
-            DocumentDetector.toGray(work), work.width, work.height);
-      final flat = bundle.detectPaperQuad(gray, gw, gh,
-          pad: pad, openRadius: openRadius, refineEdges: refineEdges);
+      // PAPER_SIM_STREAM=1: ライブ検出の入力を再現する (長辺 1920 のフレームを
+      // extractFramePixels と同じく 4 画素おきに間引く → 長辺 480)。
+      // モデルが灰色なら detectPaperQuad が輝度にして渡す
+      final (rgb, gw, gh) = simStream
+          ? _streamRgb(imageFile.readAsBytesSync())
+          : (work.getBytes(order: img.ChannelOrder.rgb), work.width, work.height);
+      double? agreement;
+      final flat = bundle.detectPaperQuad(rgb, gw, gh,
+          channels: 3,
+          pad: pad,
+          openRadius: openRadius,
+          refineEdges: refineEdges,
+          minMaskQuadIoU: minAgree,
+          onAgreement: (v) => agreement = v);
+      // ignore: avoid_print
+      print('agreement $id ${agreement?.toStringAsFixed(3) ?? '-'} '
+          '${label.corners == null ? 'negative' : 'positive'}');
       var pred = flat == null
           ? null
           : <Offset>[
@@ -127,7 +140,8 @@ void main() {
             ];
       if (pred != null && snap) {
         // 実験用: 四隅を写真のエッジへ吸着させる後処理
-        pred = DocumentDetector.snapQuadToEdges(pred, gray, gw, gh);
+        pred = DocumentDetector.snapQuadToEdges(
+            pred, DocumentDetector.lumaOf(rgb, 3), gw, gh);
       }
 
       final r = _Result(id, label, pred);
@@ -161,20 +175,24 @@ void main() {
   });
 }
 
-/// ライブ検出の入力の再現: 長辺 1920 のカメラフレーム → Y 平面を 4 画素おきに間引く。
-(Uint8List, int, int) _streamGray(Uint8List bytes) {
+/// ライブ検出の入力の再現: 長辺 1920 のカメラフレーム → 4 画素おきに間引いた RGB。
+(Uint8List, int, int) _streamRgb(Uint8List bytes) {
   var im = img.decodeImage(bytes)!;
   const frameLong = 1920;
   im = im.width >= im.height
       ? img.copyResize(im, width: frameLong, interpolation: img.Interpolation.average)
       : img.copyResize(im, height: frameLong, interpolation: img.Interpolation.average);
-  final full = DocumentDetector.toGray(im);
+  final full = im.getBytes(order: img.ChannelOrder.rgb);
   const d = 4; // camera_screen: image.width >= 1280 なら 4
   final dw = im.width ~/ d, dh = im.height ~/ d;
-  final out = Uint8List(dw * dh);
+  final out = Uint8List(dw * dh * 3);
   for (int y = 0; y < dh; y++) {
     for (int x = 0; x < dw; x++) {
-      out[y * dw + x] = full[y * d * im.width + x * d];
+      final i = (y * d * im.width + x * d) * 3;
+      final o = (y * dw + x) * 3;
+      out[o] = full[i];
+      out[o + 1] = full[i + 1];
+      out[o + 2] = full[i + 2];
     }
   }
   return (out, dw, dh);

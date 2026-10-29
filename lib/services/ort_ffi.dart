@@ -239,6 +239,7 @@ class OrtSessionBundle {
     required this.outputData,
     required this.inputNamePtr,
     required this.outputNamePtr,
+    this.inputChannels = 1,
   });
 
   final Pointer<OrtApiStruct> api;
@@ -256,6 +257,9 @@ class OrtSessionBundle {
   final Pointer<Float> outputData;
   final Pointer<Uint8> inputNamePtr;
   final Pointer<Uint8> outputNamePtr;
+
+  /// 入力のチャネル数 (NCHW の C)。紙面検出ネットは 1 (灰色) か 3 (RGB)。
+  final int inputChannels;
 
   /// ネイティブ資源をすべて解放する (使い捨てのセッション用。以後この bundle は使えない)。
   void release() {
@@ -278,8 +282,12 @@ class OrtSessionBundle {
   /// 出力バッファ (float32) からの読み取り。
   double readOutputValue(int index) => outputData[index];
 
-  /// グレー画像から紙の四隅 (正規化座標 [TL,TR,BR,BL] の平坦リスト) を検出する。
+  /// 画像から紙の四隅 (正規化座標 [TL,TR,BR,BL] の平坦リスト) を検出する。
   /// 紙が見つからない (マスクが空/全面/形が崩壊) 場合は null。
+  ///
+  /// [pixels] は 1 画素 [channels] バイトの行優先の画素列 (1: 灰色、3: RGB、4: RGBA)。
+  /// モデルの入力 ([inputChannels]) に合わせて、灰色のモデルには輝度 (BT.601) を、
+  /// RGB のモデルには RGB を渡す (灰色の画像を RGB のモデルに渡すと R=G=B)。
   ///
   /// このメソッド内で ffi のポインタ拡張を使用するため、
   /// dart:isolate や camera を import しているファイルからは呼ばないこと
@@ -287,22 +295,37 @@ class OrtSessionBundle {
   ///
   /// アプリの全経路 (切り抜き画面・撮影直後の自動判定・ライブ検出ワーカー) と
   /// 評価ハーネス (test/paper_net_eval_test.dart) が共通で使う唯一の実装。
-  /// [onDebug] には推論後の (入力, 2 値マスク, 穴埋め後マスク, マスク面積比) を渡す。
+  /// [onDebug] には推論後の (入力, 2 値マスク, 穴埋め後マスク, マスク面積比) を渡す
+  /// (入力は NCHW。RGB のモデルでは先頭の 256x256 が R)。
   List<double>? detectPaperQuad(
-    Uint8List gray,
+    Uint8List pixels,
     int w,
     int h, {
+    int channels = 1,
     void Function(Float32List input, Uint8List mask, Uint8List filled,
             double fill)?
         onDebug,
     double pad = DocumentDetector.netCornerPad,
     int openRadius = DocumentDetector.netMaskOpenRadius,
     bool refineEdges = true,
+    double minMaskQuadIoU = DocumentDetector.netMinMaskQuadIoU,
+    void Function(double maskQuadIoU)? onAgreement,
   }) {
     const elements = 256 * 256;
-    final input = inputData.asTypedList(elements);
+    final modelChannels = inputChannels;
+    final input = inputData.asTypedList(elements * modelChannels);
     final scaleX = w / 256;
     final scaleY = h / 256;
+    // 画素 i のチャネル c の値。灰色のモデルには輝度、灰色の画像は全チャネル同じ値
+    double value(int i, int c) {
+      final base = i * channels;
+      if (modelChannels == 1 && channels >= 3) {
+        return (pixels[base] * 299 + pixels[base + 1] * 587 + pixels[base + 2] * 114) /
+            1000;
+      }
+      return pixels[base + (channels == 1 ? 0 : c)].toDouble();
+    }
+
     for (int y = 0; y < 256; y++) {
       final sy = (y + 0.5) * scaleY - 0.5;
       final y0 = sy.floor().clamp(0, h - 1);
@@ -315,14 +338,16 @@ class OrtSessionBundle {
         final x0 = sx.floor().clamp(0, w - 1);
         final x1 = (x0 + 1).clamp(0, w - 1);
         final fx = (sx - x0).clamp(0.0, 1.0);
-        final p00 = gray[row0 + x0].toDouble();
-        final p10 = gray[row0 + x1].toDouble();
-        final p01 = gray[row1 + x0].toDouble();
-        final p11 = gray[row1 + x1].toDouble();
-        final top = p00 + (p10 - p00) * fx;
-        final bottom = p01 + (p11 - p01) * fx;
-        input[y * 256 + x] =
-            ((top + (bottom - top) * fy) / 255.0).clamp(0.0, 1.0);
+        for (int c = 0; c < modelChannels; c++) {
+          final p00 = value(row0 + x0, c);
+          final p10 = value(row0 + x1, c);
+          final p01 = value(row1 + x0, c);
+          final p11 = value(row1 + x1, c);
+          final top = p00 + (p10 - p00) * fx;
+          final bottom = p01 + (p11 - p01) * fx;
+          input[c * elements + y * 256 + x] =
+              ((top + (bottom - top) * fy) / 255.0).clamp(0.0, 1.0);
+        }
       }
     }
     bindings.runSimple(this);
@@ -350,6 +375,10 @@ class OrtSessionBundle {
         pad: pad,
         refineEdges: refineEdges);
     if (quad == null) return null;
+    // まだらなマスク (絵や柄の取り違え) は四角形を埋めないので紙とみなさない
+    final agreement = DocumentDetector.maskQuadIoU(filled, 256, 256, quad);
+    onAgreement?.call(agreement);
+    if (agreement < minMaskQuadIoU) return null;
     return <double>[
       for (final c in quad) ...<double>[c.dx, c.dy],
     ];
@@ -661,6 +690,28 @@ class OrtApiBindings {
           Pointer<Uint8>.fromAddress('input'.toNativeUtf8().address),
       outputNamePtr:
           Pointer<Uint8>.fromAddress('output'.toNativeUtf8().address),
+      inputChannels: inputShape.length == 4 ? inputShape[1] : 1,
     );
+  }
+
+  /// 紙面検出ネットのセッションを作る。入力が RGB (1x3x256x256) か灰色 (1x1x256x256) かは
+  /// モデルによるので、RGB で 1 回推論して通らなければ灰色で作り直す。
+  static OrtSessionBundle createPaperSessionBundle(Uint8List modelBytes,
+      {String? libraryPath, int? apiBaseAddress, OrtSessionConfig? config}) {
+    for (final channels in const <int>[3, 1]) {
+      final bundle = createSessionBundle(modelBytes,
+          libraryPath: libraryPath,
+          apiBaseAddress: apiBaseAddress,
+          inputShape: <int>[1, channels, 256, 256],
+          config: config);
+      try {
+        bundle.bindings.runSimple(bundle);
+        return bundle;
+      } catch (_) {
+        bundle.release();
+        if (channels == 1) rethrow;
+      }
+    }
+    throw StateError('unreachable');
   }
 }

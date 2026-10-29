@@ -14,6 +14,9 @@ v1 (train_paper_net.py) からの変更点:
   数値 id が奇数のペアだけを読み、偶数 (holdout) は eval_synthetic.py の評価専用に残す
 - エンコーダは ImageNet 事前学習済み MobileNetV3-Small (BSD-3)。
   入出力はアプリと同じ 1x1x256x256 (グレー 0..1 → ロジット) のまま
+- --color で入力を 1x3x256x256 (RGB 0..1) にする。白い紙とベージュの机のように
+  明るさが近く色味だけが違う場面を見分けるため。全体の色温度のずれと、明るさが紙に
+  近い暖色の机も合成する。保存合成・train_real (灰色) は R=G=B として混ぜる
 
 使い方:
   tools/.venv/Scripts/python tools/train_paper_net_v2.py --steps 4000
@@ -274,6 +277,38 @@ def photometric(rng, img):
     return np.clip(img, 0, 1)
 
 
+def white_balance(rng, img):
+    """画面全体の色温度のずれ (紙も机も同じ照明の色を帯びる。float BGR 0..1)。
+    紙の絶対的な白さではなく、紙と机の色の違いで見分けるようにするため。"""
+    t = rng.uniform(-0.15, 0.15)  # + で暖色 (赤寄り)、- で寒色 (青寄り)
+    gains = np.array([1 - t, 1 + rng.uniform(-0.04, 0.04), 1 + t], np.float32)
+    return np.clip(img * gains, 0, 1)
+
+
+def warm_desk(rng, width, height):
+    """明るさが紙に近いベージュ・木目の机 (float BGR 0..1)。灰色では紙と区別しにくい。"""
+    v = rng.uniform(0.45, 0.88)
+    w = rng.uniform(0.03, 0.18)  # 黄み (b* が正) の強さ
+    base = np.array([v * (1 - w), v * (1 + w * 0.15), v * (1 + w * 0.6)], np.float32)
+    img = np.broadcast_to(base, (height, width, 3)).copy()
+    yy, xx = np.mgrid[:height, :width].astype(np.float32)
+    if rng.random() < 0.5:
+        angle = rng.uniform(0, np.pi)
+        u = xx * np.cos(angle) + yy * np.sin(angle)
+        grain = np.sin(u / rng.uniform(3, 14) + 0.7 * np.sin(u / 45))
+        img *= 1 + grain[..., None] * rng.uniform(0.01, 0.06)
+    # 机の上の小物 (キーボード・マウス・ケーブル相当の暗い・白い物体)
+    for _ in range(int(rng.integers(0, 4))):
+        x0, y0 = rng.uniform(-0.2, 0.9) * width, rng.uniform(-0.2, 0.9) * height
+        x1 = x0 + rng.uniform(0.1, 0.6) * width
+        y1 = y0 + rng.uniform(0.05, 0.25) * height
+        color = (rng.uniform(0.05, 0.3, 3) if rng.random() < 0.6
+                 else np.full(3, rng.uniform(0.8, 0.98))).tolist()
+        cv2.rectangle(img, (int(x0), int(y0)), (int(x1), int(y1)), color, -1)
+    img += rng.normal(0, 0.008, (height, width, 1)).astype(np.float32)
+    return np.clip(img, 0, 1).astype(np.float32)
+
+
 def to_gray(img):
     """アプリ (DocumentDetector.toGray) と同じ輝度 (BGR 入力)。"""
     return img[..., 2] * 0.299 + img[..., 1] * 0.587 + img[..., 0] * 0.114
@@ -391,8 +426,10 @@ def synthesis_options(synth_profile="legacy", **overrides):
 
 def make_composite(rng, papers, bgs, want_canvas=False, p_multi=None, p_occluder=None,
                    p_panel=None, p_procedural=None, p_negative=None, synth_profile="legacy",
-                   p_clipped=None, p_stack=None):
-    """1 サンプル。want_canvas=True なら評価書き出し用に canvas と四隅も返す。"""
+                   p_clipped=None, p_stack=None, color=False):
+    """1 サンプル。want_canvas=True なら評価書き出し用に canvas と四隅も返す。
+
+    color=False は灰色 [H,W]、color=True は RGB [H,W,3] (どちらも 0..1) を返す。"""
     opts = synthesis_options(synth_profile, p_multi=p_multi, p_occluder=p_occluder,
                              p_panel=p_panel, p_procedural=p_procedural,
                              p_negative=p_negative, p_clipped=p_clipped, p_stack=p_stack)
@@ -414,7 +451,9 @@ def make_composite(rng, papers, bgs, want_canvas=False, p_multi=None, p_occluder
         cv2.fillPoly(mask, [dst.round().astype(np.int32)], 1.0)
     else:
         canvas = None
-        if rng.random() < (0.60 if synth_profile == "diverse" else 0.75):
+        if color and rng.random() < 0.25:
+            canvas = warm_desk(rng, W, H)
+        elif rng.random() < (0.60 if synth_profile == "diverse" else 0.75):
             canvas = crop_bg(rng, bgs, W, H)
         if canvas is None:
             canvas = (procedural_background(rng, W, H) if synth_profile == "diverse"
@@ -428,6 +467,8 @@ def make_composite(rng, papers, bgs, want_canvas=False, p_multi=None, p_occluder
                                             p_clipped=opts["p_clipped"],
                                             p_stack=opts["p_stack"])
     canvas = photometric(rng, canvas)
+    if color:
+        canvas = white_balance(rng, canvas)
     if synth_profile == "diverse":
         canvas = camera_effects(rng, canvas)
     k = int(rng.integers(4))  # センサー向き (縦持ち/横持ち) の 90 度回転
@@ -440,6 +481,8 @@ def make_composite(rng, papers, bgs, want_canvas=False, p_multi=None, p_occluder
                 w_now = W
                 dst = np.stack([dst[:, 1], w_now - 1 - dst[:, 0]], 1)
                 W, H = H, W
+    if color:
+        return _finish_color(rng, canvas, mask, dst, want_canvas)
     gray = to_gray(canvas)
     g, m = squash(rng, gray, mask)
     g = g + rng.normal(0, rng.uniform(0, 0.03), g.shape)
@@ -453,10 +496,36 @@ def make_composite(rng, papers, bgs, want_canvas=False, p_multi=None, p_occluder
     return g, m
 
 
+def _finish_color(rng, canvas, mask, dst, want_canvas):
+    """色モードの仕上げ: RGB にして縮小・ノイズ・JPEG 劣化。"""
+    rgb = np.ascontiguousarray(canvas[..., ::-1])
+    x, m = squash(rng, rgb, mask)
+    s = rng.uniform(0, 0.03)
+    x = x + rng.normal(0, s, (IMG, IMG, 1)) + rng.normal(0, s * 0.3, x.shape)
+    x = np.clip(x, 0, 1).astype(np.float32)
+    if rng.random() < 0.3:
+        ok, enc = cv2.imencode(".jpg", (x[..., ::-1] * 255).astype(np.uint8),
+                               [cv2.IMWRITE_JPEG_QUALITY, int(rng.integers(40, 90))])
+        x = cv2.imdecode(enc, cv2.IMREAD_COLOR)[..., ::-1].astype(np.float32) / 255.0
+    if rng.random() < 0.08:
+        # 色が当てにならない場面 (色の抜けた照明など) でも明るさだけで見つけられるように
+        x = np.repeat(to_gray(x[..., ::-1])[..., None], 3, axis=2)
+    x = np.ascontiguousarray(x, dtype=np.float32)
+    if want_canvas:
+        return x, m, canvas, dst
+    return x, m
+
+
+def to_chw(x):
+    """灰色 [H,W] / RGB [H,W,3] を [C,H,W] にする。"""
+    return x[None] if x.ndim == 2 else np.ascontiguousarray(x.transpose(2, 0, 1))
+
+
 class CompositeStream(IterableDataset):
-    def __init__(self, seed, split="train", **options):
+    def __init__(self, seed, split="train", color=False, **options):
         self.seed = seed
         self.split = split
+        self.color = color
         self.options = synthesis_options(**options)
 
     def __iter__(self):
@@ -467,8 +536,8 @@ class CompositeStream(IterableDataset):
         papers, bgs = load_assets()
         pool = papers[self.split]
         while True:
-            g, m = make_composite(rng, pool, bgs, **self.options)
-            yield torch.from_numpy(g[None]), torch.from_numpy(m[None])
+            g, m = make_composite(rng, pool, bgs, color=self.color, **self.options)
+            yield torch.from_numpy(to_chw(g)), torch.from_numpy(m[None])
 
 
 # ---------------------------------------------------------------- モデル
@@ -508,7 +577,9 @@ class PaperSegV2(nn.Module):
 
     def forward(self, x):
         g = x
-        x = (x.repeat(1, 3, 1, 1) - self.mean) / self.std
+        if x.shape[1] == 1:
+            x = x.repeat(1, 3, 1, 1)
+        x = (x - self.mean) / self.std
         f2 = self.s2(x)
         f4 = self.s4(f2)
         f8 = self.s8(f4)
@@ -649,18 +720,19 @@ def mix_real_pairs(x, y, rx, ry, rng, ratio, p=None, slots=None):
     picks = rng.choice(len(rx), n, replace=True, p=p)
     for j, i in zip(slots, picks):
         ax, ay = augment_real_pair(rx[i], ry[i], rng)
-        x[j] = torch.from_numpy(ax.transpose(2, 0, 1).copy())
+        # 灰色のペアを色モードのバッチに入れるときは R=G=B にする
+        x[j] = torch.from_numpy(ax.transpose(2, 0, 1).copy()).expand(x.shape[1], -1, -1)
         y[j] = torch.from_numpy(ay.transpose(2, 0, 1).copy())
     return x, y
 
 
-def fixed_val_set(n, seed=123):
+def fixed_val_set(n, seed=123, color=False):
     rng = np.random.default_rng(seed)
     papers, bgs = load_assets()
     xs, ys = [], []
     for _ in range(n):
-        g, m = make_composite(rng, papers["val"], bgs)
-        xs.append(g[None])
+        g, m = make_composite(rng, papers["val"], bgs, color=color)
+        xs.append(to_chw(g))
         ys.append(m[None])
     return torch.from_numpy(np.stack(xs)), torch.from_numpy(np.stack(ys))
 
@@ -669,20 +741,28 @@ def onnx_iou(path, vx, vy):
     import onnxruntime as ort
 
     sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+    channels = sess.get_inputs()[0].shape[1]
     ious = []
     for i in range(len(vx)):
-        out = sess.run(None, {sess.get_inputs()[0].name: vx[i:i + 1].numpy()})[0]
+        x = vx[i:i + 1].numpy()
+        if channels == 1 and x.shape[1] == 3:
+            # 灰色のモデル (現行) と比べるときはアプリと同じ輝度にして渡す
+            x = (x[:, 0:1] * 0.299 + x[:, 1:2] * 0.587 + x[:, 2:3] * 0.114).astype(np.float32)
+        out = sess.run(None, {sess.get_inputs()[0].name: x})[0]
         ious.append(iou_score(torch.from_numpy(out), vy[i:i + 1]))
     return float(np.mean(ious))
 
 
-def preview(n, out_path, seed=1, **options):
+def preview(n, out_path, seed=1, color=False, **options):
     rng = np.random.default_rng(seed)
     papers, bgs = load_assets()
     tiles = []
     for _ in range(n):
-        g, m = make_composite(rng, papers["train"], bgs, **options)
-        t = cv2.cvtColor((g * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+        g, m = make_composite(rng, papers["train"], bgs, color=color, **options)
+        if color:
+            t = np.ascontiguousarray((g[..., ::-1] * 255).astype(np.uint8))
+        else:
+            t = cv2.cvtColor((g * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
         cnts, _ = cv2.findContours((m > 0.5).astype(np.uint8), cv2.RETR_EXTERNAL,
                                    cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(t, cnts, -1, (40, 40, 240), 2)
@@ -765,6 +845,8 @@ def main():
     ap.add_argument("--p-stack", type=float, default=None,
                     help="主な紙の下にずらした紙を重ねる割合 (正解は手前の 1 枚)")
     ap.add_argument("--init-pth", default="", help="この重みから学習を始める (例: build/paper_seg_v2.pth)")
+    ap.add_argument("--color", action="store_true",
+                    help="入力を RGB 3ch にする (1x3x256x256)。灰色のモデルの重みから始めてもよい")
     ap.add_argument("--real-pairs-dir", default=REAL_PAIRS_DIR,
                     help="promote_captures.py が作った実写ペア (images/ + masks/)。あれば混合する")
     ap.add_argument("--real-ratio", type=float, default=0.2,
@@ -789,8 +871,10 @@ def main():
     print("synthesis:", json.dumps(options, ensure_ascii=False))
 
     if args.preview:
-        preview(args.preview, args.preview_out, seed=args.seed, **options)
+        preview(args.preview, args.preview_out, seed=args.seed, color=args.color, **options)
         return
+    if args.export_synth and args.color:
+        ap.error("--export-synth は灰色のみ対応")
     if args.export_synth:
         export_synthetic(args.export_synth, args.synth_out, seed=args.seed, **options)
         return
@@ -804,11 +888,11 @@ def main():
     n_params = sum(p.numel() for p in model.parameters())
     print(f"params: {n_params:,} ({n_params * 4 / 1e6:.2f} MB fp32)")
 
-    vx, vy = fixed_val_set(256)
+    vx, vy = fixed_val_set(256, color=args.color)
     if os.path.exists(args.baseline):
         print(f"baseline {os.path.basename(args.baseline)} val IoU: {onnx_iou(args.baseline, vx, vy):.4f}")
 
-    loader = DataLoader(CompositeStream(seed=42, **options),
+    loader = DataLoader(CompositeStream(seed=42, color=args.color, **options),
                         batch_size=args.batch,
                         num_workers=args.workers, persistent_workers=args.workers > 0)
     rx, ry, real_ids, real_p = load_real_pairs(args.real_pairs_dir)
@@ -882,17 +966,19 @@ def main():
 
     model.load_state_dict(torch.load(pth, map_location="cpu"))
     model.eval()
-    torch.onnx.export(model, torch.zeros(1, 1, IMG, IMG), args.out,
+    channels = 3 if args.color else 1
+    torch.onnx.export(model, torch.zeros(1, channels, IMG, IMG), args.out,
                       input_names=["input"], output_names=["output"],
                       opset_version=17, do_constant_folding=True, dynamo=False)
     print(f"exported: {args.out} ({os.path.getsize(args.out) / 1024:.0f} KB)")
     print(f"exported val IoU: {onnx_iou(args.out, vx, vy):.4f} (チェックポイント選択に使用)")
     # 選択に使っていない別シードのテストセット。背景素材は学習と共通なので
     # 実写での性能は ./dev.ps1 eval -Data training_data/eval_heldout で測ること。
-    tx, ty = fixed_val_set(256, seed=999)
+    tx, ty = fixed_val_set(256, seed=999, color=args.color)
     print(f"exported test IoU: {onnx_iou(args.out, tx, ty):.4f} (未使用シード)")
     # 学習データの記録 (保存合成が実際に何回使われたかを残す)
     record = dict(out=os.path.basename(args.out), init=args.init_pth or "imagenet",
+                  color=args.color,
                   steps=args.steps, batch=args.batch, lr=args.lr, synthesis=options,
                   batch_split=dict(onthefly=args.batch - n_real - n_saved, saved=n_saved,
                                    train_real=n_real),

@@ -26,6 +26,7 @@ training_data/
 ├── eval_heldout_rot90/      評価: 同上を 90 度回転 (縦持ち相当)
 ├── eval_hard/               評価: 楽譜の難例 (重なり・折れ・はみ出し、主指標は IoU)
 │                            ※ corners はフレームからはみ出た難例で 0..1 を超え得る
+├── eval_desk/               評価: 開発用タブレットで撮ったベージュの机の紙 (明るさが紙に近い机)
 ├── eval_web/                評価: Web 収集の OOD キャナリー (出典は SOURCES.md)
 │                            ← アプリ分布への過適合を検知する番人
 └── quarantine_heldout_dup/  使わない: eval_heldout と重複していた実写 (学習禁止)
@@ -46,7 +47,8 @@ training_data/
                                                    train_real (--real-ratio) を自動混合。
                                                    内訳は build/<モデル名>.data.json
 ⑤ 評価        ./dev.ps1 eval -Model build/paper_seg_v2.onnx -Data training_data/eval_heldout
-               (eval_heldout_rot90 / eval_hard / eval_web も。現行モデルと必ず比較)
+               (eval_heldout_rot90 / eval_hard / eval_web / eval_desk も。現行モデルと必ず比較)
+               ライブ検出の入力で測るときは $env:PAPER_SIM_STREAM='1' を付ける
                合成の条件別内訳: tools/eval_synthetic.py -M assets/models/paper_seg.onnx
 ⑥ 実機診断    ./dev.ps1 install → 設定で「紙面検出の自己診断を許可」を ON → ./dev.ps1 selftest
 ⑦ 採用        Copy-Item build/paper_seg_v2.onnx assets/models/paper_seg.onnx → install
@@ -62,9 +64,10 @@ training_data/
 
 | セット | 主指標 | 基準の目安 |
 |---|---|---|
-| eval_heldout / _rot90 | 角誤差中央値・成功@5% | 現行 v4: 実写角誤差中央値 0.76% (辺直線当てはめ後) |
-| eval_hard | 平均 IoU | v2 0.875 → v4 0.936 (成功@5% 62% → 100%) |
-| eval_web | 検出率・誤検出率 | 現行 v4: 紙ありクリーン成功 0/5・ネガティブ 3/3 拒否 (既知の OOD 限界) |
+| eval_heldout / _rot90 | 角誤差中央値・成功@5% | 現行 v5c: 実写角誤差中央値 0.71% (v4 0.77%) |
+| eval_hard | 平均 IoU・角誤差中央値 | v2 0.875 → v4 0.936 → v5c 0.955 (角誤差 2.46% → 1.35%) |
+| eval_desk | 角誤差中央値 | v4 1.41% (ライブ 1.41%) → v5c 0.41% (ライブ 0.44%) |
+| eval_web | 検出率・誤検出率 | 現行 v5c: 検出 3/5・ネガティブ 3/3 拒否 (既知の OOD 限界) |
 
 eval_web の正解ラベルは画像解析モデルによる目視推定 (±2〜3%)。細かい数値の
 トレンドより「全滅 ↔ 数枚救える」の大きな変化を見るために使う。

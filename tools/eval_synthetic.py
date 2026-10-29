@@ -103,6 +103,9 @@ def eval_group(sess, name, group_dir, limit=0, split="all", collect_fp=False, th
         if im is None or im.shape != (IMG, IMG):
             continue
         x = (im.astype(np.float32) / 255.0)[None, None]
+        if sess.get_inputs()[0].shape[1] == 3:
+            # 保存合成は灰色なので、RGB のモデルには R=G=B で渡す
+            x = np.repeat(x, 3, axis=1)
         out = sess.run(None, {sess.get_inputs()[0].name: x})[0][0, 0]
         pred = out > thresh
         area = pred.mean()

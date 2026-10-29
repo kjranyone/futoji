@@ -9,7 +9,6 @@ import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:image/image.dart' as img;
 
 import '../models/crop_result.dart';
-import '../services/detector.dart';
 import '../services/fast_decode.dart';
 import '../services/paper_net.dart';
 import '../services/training_capture.dart';
@@ -89,8 +88,8 @@ class _CropScreenState extends State<CropScreen> {
     // 誤検出しないよう代替検出にはフォールバックしない。
     List<Offset>? quad;
     if (detect) {
-      final gray = DocumentDetector.toGray(rotated);
-      quad = await PaperNet.detectQuad(gray, rotated.width, rotated.height);
+      final rgb = rotated.getBytes(order: img.ChannelOrder.rgb);
+      quad = await PaperNet.detectQuad(rgb, rotated.width, rotated.height, channels: 3);
     }
     if (!mounted) return;
     setState(() {
