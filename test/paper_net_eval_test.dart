@@ -159,7 +159,13 @@ void main() {
       final r = _Result(id, label, pred);
       final truth = label.corners;
       if (pred != null && truth != null) {
-        final e = QuadMetrics.cornerError(pred, truth, work.width, work.height);
+        // 紙が画面からはみ出した難例は、正解の角が写真の外にある (辺を延長した位置)。アプリの
+        // 枠は写真の外へ出せないので、写真の端に寄せた角と比べる (IoU は元から写真の中だけ)
+        final inFrame = <Offset>[
+          for (final c in truth)
+            Offset(c.dx.clamp(0.0, 1.0), c.dy.clamp(0.0, 1.0)),
+        ];
+        final e = QuadMetrics.cornerError(pred, inFrame, work.width, work.height);
         r.meanErr = e.mean;
         r.maxErr = e.max;
         r.iou = QuadMetrics.quadIoU(pred, truth, work.width, work.height);
@@ -301,6 +307,7 @@ String _report(List<_Result> all, File model) {
     ..writeln('- 紙なし画像での誤検出率: ${_pct(_falsePositiveRate(neg))} '
         '(${neg.where((r) => r.detected).length}/${neg.length})')
     ..writeln('- 角誤差 = 対応する角の距離 / 画像対角線 (4 角平均)。'
+        '写真の外にある正解の角は写真の端に寄せて比べる。'
         '未検出は成功率・IoU で失敗 (0) 扱い')
     ..writeln()
     ..writeln('| group | n | 検出率 | 角誤差 中央値 | 平均 IoU | '

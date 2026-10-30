@@ -398,6 +398,43 @@ void main() {
     }
   });
 
+  test('辺の直線当てはめ: めくれて丸く欠けた角は、辺を延ばした交点にする', () {
+    // 評価の難例 (hard_0143): 右下の角がめくれ、マスクの角が大きく丸く欠ける。四角形の辺は
+    // 欠けた角を斜めに結ぶので、本当の右辺と下辺はその外側にある。正解は辺を延ばした交点
+    const w = 256, h = 256;
+    const truth = <Offset>[
+      Offset(50.0, 30.0),
+      Offset(232.0, 40.0),
+      Offset(240.0, 222.0),
+      Offset(30.0, 214.0),
+    ];
+    bool inside(double x, double y) {
+      for (int i = 0; i < 4; i++) {
+        final a = truth[i], b = truth[(i + 1) % 4];
+        if ((b.dx - a.dx) * (y - a.dy) - (b.dy - a.dy) * (x - a.dx) < 0) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    final mask = Uint8List(w * h);
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        // 右下を半径 60 画素の円弧で丸く欠く
+        final dx = x + 0.5 - (240.0 - 60), dy = y + 0.5 - (222.0 - 60);
+        final cut = dx > 0 && dy > 0 && dx * dx + dy * dy > 60.0 * 60.0;
+        if (inside(x + 0.5, y + 0.5) && !cut) mask[y * w + x] = 255;
+      }
+    }
+    final q = DocumentDetector.detectLuminance(mask, w, h,
+        workWidth: w, paperChecks: false, pad: 0)!;
+    for (int i = 0; i < 4; i++) {
+      final err = (Offset(q[i].dx * w, q[i].dy * h) - truth[i]).distance;
+      expect(err, lessThan(4.0), reason: '角 $i: ${q[i] * w.toDouble()} (正解 ${truth[i]})');
+    }
+  });
+
   test('辺の直線当てはめ: 上に重なった紙で欠けたマスクでも、見えている本当の辺を使う', () {
     // 評価の難例 (hard_0167): 紙の上の端に別の紙が斜めに重なり、マスクが欠ける。正解は隠れた
     // 部分も含めた紙全体。欠けの縁 (内側の直線) を辺と取り違えると角が内側へずれる

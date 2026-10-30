@@ -779,7 +779,45 @@ class DocumentDetector {
         p.y <= borderMargin ||
         p.x >= w - 1 - borderMargin ||
         p.y >= h - 1 - borderMargin;
+    // 各辺について、元の辺から 3% 以内の境界画素の数を、中央 80% 全体 / 始点側 30% / 終点側 30%
+    // で数える
+    final near = <(int, int, int)>[
+      for (int e = 0; e < 4; e++)
+        () {
+          final a = q[e], b = q[(e + 1) % 4];
+          final len = a.distanceTo(b);
+          final ex = (b.x - a.x) / len, ey = (b.y - a.y) / len;
+          final outTol = math.max(3.0, len * 0.03);
+          var n = 0, nA = 0, nB = 0;
+          for (final p in boundary) {
+            final dx = p.x - a.x, dy = p.y - a.y;
+            final t = dx * ex + dy * ey;
+            if (t < len * 0.1 || t > len * 0.9) continue;
+            if ((dx * -ey + dy * ex).abs() > outTol) continue;
+            n++;
+            if (t < len * 0.4) nA++;
+            if (t > len * 0.6) nB++;
+          }
+          return (n, nA, nB);
+        }(),
+    ];
+    final lacking = <bool>[
+      for (int e = 0; e < 4; e++)
+        near[e].$1 < math.max(8, q[e].distanceTo(q[(e + 1) % 4]) * 0.2),
+    ];
+    // 角 i の欠け: 両隣の辺が、どちらもその角に近い 30% で元の辺に沿う画素をほとんど持たない
+    // (めくれ・折り返しで角が丸く欠け、四角形の頂点が欠けの円弧の上にある)
+    final cutCorner = <bool>[
+      for (int i = 0; i < 4; i++)
+        () {
+          final prev = (i + 3) % 4;
+          final lp = q[prev].distanceTo(q[i]), lc = q[i].distanceTo(q[(i + 1) % 4]);
+          return near[prev].$3 < lp * 0.3 * 0.3 && near[i].$2 < lc * 0.3 * 0.3;
+        }(),
+    ];
     final lines = <(Offset, Offset)?>[];
+    // 各辺の直線に乗った境界画素の数 / 元の辺の長さ (まっすぐな縁がどれだけ長く続くか)
+    final support = <double>[];
     for (int e = 0; e < 4; e++) {
       final a = q[e];
       final b = q[(e + 1) % 4];
@@ -793,76 +831,87 @@ class DocumentDetector {
       }
       final outTol = math.max(3.0, len * 0.03);
       final inTol = math.max(3.0, len * 0.15);
-      final cand = <(double, Point<double>)>[];
+      final outFar = math.max(3.0, len * 0.15);
+      // (辺に沿った位置 t, 画素, 内向きの距離 d)
+      final cand = <(double, Point<double>, double)>[];
       for (final p in boundary) {
         final dx = p.x - a.x, dy = p.y - a.y;
         final t = dx * ex + dy * ey;
         if (t < len * 0.1 || t > len * 0.9) continue;
         final d = dx * inx + dy * iny;
-        if (d < -outTol || d > inTol) continue;
-        cand.add((t, p));
-      }
-      final minPts = math.max(8, len * 0.2);
-      if (cand.length < minPts) {
-        lines.add(null);
-        continue;
+        if (d < -outFar || d > inTol) continue;
+        cand.add((t, p, d));
       }
       cand.sort((p, q) => p.$1.compareTo(q.$1));
-      final pts = <Point<double>>[for (final c in cand) c.$2];
-      int countNear(double ox, double oy, double ux, double uy) {
-        var n = 0;
-        for (final p in pts) {
-          if (((p.x - ox) * -uy + (p.y - oy) * ux).abs() <= 2.0) n++;
-        }
-        return n;
-      }
+      final minPts = math.max(8, len * 0.2);
+      // 元の辺の近く〜内側の候補 / 元の辺の外側の候補 / 全部
+      final pts = <Point<double>>[
+        for (final c in cand)
+          if (c.$3 >= -outTol) c.$2,
+      ];
+      final all = <Point<double>>[for (final c in cand) c.$2];
+      final outer = <Point<double>>[
+        for (final c in cand)
+          if (c.$3 <= outTol) c.$2,
+      ];
 
-      var ox = a.x, oy = a.y, ux = ex, uy = ey;
-      var tol = outTol;
-      if (onBorder(a) || onBorder(b)) {
-        // 辺に沿って等間隔に選んだ点の組から、最も多くの候補が乗る直線を探す
-        final m = math.min(24, pts.length);
+      // 辺に沿って等間隔に選んだ点の組から、2 画素以内に最も多くの候補が乗る直線を探す
+      // (決定的な RANSAC)。戻り値は (乗った数, 点, 単位方向)
+      (int, double, double, double, double)? bestLine(List<Point<double>> ps) {
+        if (ps.length < minPts) return null;
+        final m = math.min(24, ps.length);
         final picks = <Point<double>>[
-          for (int i = 0; i < m; i++) pts[(i * (pts.length - 1) / (m - 1)).round()],
+          for (int i = 0; i < m; i++) ps[(i * (ps.length - 1) / (m - 1)).round()],
         ];
-        var bestN = -1;
+        (int, double, double, double, double)? best;
         for (int i = 0; i < m; i++) {
           for (int j = i + 1; j < m; j++) {
             final pi = picks[i], pj = picks[j];
             final d = pi.distanceTo(pj);
             if (d < len * 0.2) continue;
             final vx = (pj.x - pi.x) / d, vy = (pj.y - pi.y) / d;
-            final n = countNear(pi.x, pi.y, vx, vy);
-            if (n > bestN) {
-              bestN = n;
-              ox = pi.x;
-              oy = pi.y;
-              ux = vx;
-              uy = vy;
+            var n = 0;
+            for (final p in ps) {
+              if (((p.x - pi.x) * -vy + (p.y - pi.y) * vx).abs() <= 2.0) n++;
             }
+            if (best == null || n > best.$1) best = (n, pi.x, pi.y, vx, vy);
           }
         }
-        if (bestN < minPts) {
+        return best == null || best.$1 < minPts ? null : best;
+      }
+
+      var ox = a.x, oy = a.y, ux = ex, uy = ey;
+      var tol = outTol;
+      var fitPts = pts;
+      // 欠けた角に接する辺: 四角形の辺は欠けの円弧を斜めに結んでいるので、本当の辺は外側にある。
+      // 欠けた角がなければ外側は探さない: 重なった紙では、外側の直線は下の紙の縁 (難例 hard_0179)
+      final cut = cutCorner[e] || cutCorner[(e + 1) % 4];
+      // 縁にある辺は内側を (欠けた角に接するなら外側も)、縁から離れた辺は、元の辺の近くに画素が
+      // 足りないか欠けた角に接するときだけ探す (欠けた角に接するなら外側を)
+      final border = onBorder(a) || onBorder(b);
+      if (border || lacking[e] || cut) {
+        if (!border && !cut) {
           lines.add(null);
+          support.add(0);
           continue;
         }
+        fitPts = border ? (cut ? all : pts) : outer;
+        final best = bestLine(fitPts);
+        if (best == null) {
+          lines.add(null);
+          support.add(0);
+          continue;
+        }
+        (_, ox, oy, ux, uy) = best;
         tol = 2.0;
-      } else {
-        var nearHull = 0;
-        for (final p in pts) {
-          if (((p.x - a.x) * -ey + (p.y - a.y) * ex).abs() <= outTol) nearHull++;
-        }
-        if (nearHull < minPts) {
-          lines.add(null);
-          continue;
-        }
       }
       // 直線の近くの候補で全最小二乗をやり直す (初回は元の辺から 3% 以内、以降 2 画素以内)
       var ok = false;
+      var fitN = 0;
       for (int iter = 0; iter < 3; iter++) {
         double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
         int n = 0;
-        for (final p in pts) {
+        for (final p in fitPts) {
           if (((p.x - ox) * -uy + (p.y - oy) * ux).abs() > tol) continue;
           sx += p.x;
           sy += p.y;
@@ -873,6 +922,7 @@ class DocumentDetector {
         }
         if (n < minPts) break;
         ok = true;
+        fitN = n;
         final mx = sx / n, my = sy / n;
         final cxx = sxx / n - mx * mx;
         final cyy = syy / n - my * my;
@@ -892,9 +942,10 @@ class DocumentDetector {
       }
       if (!ok) {
         lines.add(null);
+        support.add(0);
         continue;
       }
-      // 外向き法線へ 0.5 画素
+      support.add(fitN / len);
       var nx = -uy, ny = ux;
       if (nx * (ox - cx) + ny * (oy - cy) < 0) {
         nx = -nx;
@@ -910,8 +961,21 @@ class DocumentDetector {
     // 中) へは 25% まで認める: はみ出した塊は凸包を外へ広げるだけなので、本当の角は内側にある。
     // 内側かどうかは 5% の余裕を持って見る: 塊の側の辺も引き直すと、新しい角は元の辺のわずかに
     // 外 (数画素) に出ることがある (ライブ検出の実機 2026-10-30、左上の角が上辺の 1.5 画素外)。
+    // 外側へも、両隣の辺がまっすぐ長く当てはまり (中央 80% の 45% 以上)、十分な角度で交わるときは
+    // 25% まで認める: めくれ・折れで角が欠けたマスクでは、本当の角は辺を延ばした交点にある
+    // (評価の難例 hard_0143、右下がめくれて丸く欠けた)。
     final maxMove = math.min(w, h) * 0.05;
     final maxInward = math.min(w, h) * 0.25;
+    bool strongCorner(int i) {
+      final prev = lines[(i + 3) % 4], cur = lines[i];
+      if (prev == null || cur == null) return false;
+      if (support[(i + 3) % 4] < 0.45 || support[i] < 0.45) return false;
+      final ax = prev.$2.dx - prev.$1.dx, ay = prev.$2.dy - prev.$1.dy;
+      final bx = cur.$2.dx - cur.$1.dx, by = cur.$2.dy - cur.$1.dy;
+      // 単位方向どうしの外積 = sin(交わる角)。30 度未満は交点が不安定
+      return (ax * by - ay * bx).abs() >= 0.5;
+    }
+
     bool insideQuad(Point<double> p) {
       for (int i = 0; i < 4; i++) {
         final a = q[i], b = q[(i + 1) % 4];
@@ -940,7 +1004,10 @@ class DocumentDetector {
           if (ip != null) {
             final fit = Point<double>(ip.dx, ip.dy);
             final move = fit.distanceTo(q[i]);
-            if (move <= maxMove || (move <= maxInward && insideQuad(fit))) p = fit;
+            if (move <= maxMove ||
+                (move <= maxInward && (insideQuad(fit) || strongCorner(i)))) {
+              p = fit;
+            }
           }
           return Point<double>((p.x + 0.5).clamp(0.0, w.toDouble()),
               (p.y + 0.5).clamp(0.0, h.toDouble()));
