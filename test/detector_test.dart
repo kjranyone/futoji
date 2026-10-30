@@ -361,6 +361,43 @@ void main() {
     }
   });
 
+  test('辺の直線当てはめ: 縁の手前で止まった帯状のはみ出しにも引っ張られない', () {
+    // 実機のライブ検出 (2026-10-30): 紙の上辺に沿って机へ帯 (高さ 16 画素) がはみ出し、
+    // その先は画面の左端から 3 画素手前で止まった。縁に届いていないため内側の辺を探さず、
+    // 新しい左上の角も元の上辺の 1〜2 画素外に出て捨てられ、枠が画面の端まで出ていた
+    const w = 256, h = 256;
+    const truth = <Offset>[
+      Offset(46.0, 13.0),
+      Offset(216.0, 9.0),
+      Offset(220.0, 200.0),
+      Offset(54.0, 202.0),
+    ];
+    bool inside(double x, double y) {
+      for (int i = 0; i < 4; i++) {
+        final a = truth[i], b = truth[(i + 1) % 4];
+        if ((b.dx - a.dx) * (y - a.dy) - (b.dy - a.dy) * (x - a.dx) < 0) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    final mask = Uint8List(w * h);
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        // 紙 + 上辺に沿って左へ伸びる帯 (x = 3 から紙まで、y = 14〜29)
+        final strip = x >= 3 && x < 50 && y >= 14 && y < 30;
+        if (inside(x + 0.5, y + 0.5) || strip) mask[y * w + x] = 255;
+      }
+    }
+    final q = DocumentDetector.detectLuminance(mask, w, h,
+        workWidth: w, paperChecks: false, pad: 0)!;
+    for (int i = 0; i < 4; i++) {
+      final err = (Offset(q[i].dx * w, q[i].dy * h) - truth[i]).distance;
+      expect(err, lessThan(3.0), reason: '角 $i: ${q[i] * w.toDouble()} (正解 ${truth[i]})');
+    }
+  });
+
   test('辺の直線当てはめ: 上に重なった紙で欠けたマスクでも、見えている本当の辺を使う', () {
     // 評価の難例 (hard_0167): 紙の上の端に別の紙が斜めに重なり、マスクが欠ける。正解は隠れた
     // 部分も含めた紙全体。欠けの縁 (内側の直線) を辺と取り違えると角が内側へずれる

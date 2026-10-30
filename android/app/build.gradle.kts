@@ -21,6 +21,26 @@ val githubDist = (project.findProperty("dart-defines") as String?)
     ?.mapNotNull { runCatching { String(Base64.getDecoder().decode(it)) }.getOrNull() }
     ?.contains("FUTOJI_DIST=github") == true
 
+// flutter が渡す -Ptarget-platform (flutter run は接続した端末の ABI だけ、build は指定どおり)
+val flutterTargetPlatforms = (project.findProperty("target-platform") as String?)
+    ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
+val abiOf = mapOf(
+    "android-arm" to "armeabi-v7a",
+    "android-arm64" to "arm64-v8a",
+    "android-x64" to "x86_64",
+    "android-x86" to "x86",
+)
+// GitHub で配る APK (--split-per-abi) は flutter が versionCode に 1000 × ABI 番号を足す
+// (arm64 なら 5005 → 7005)。1 つの ABI だけのビルド (flutter run と ./dev.ps1 install) にも同じ数を
+// 足し、GitHub 版を入れた端末へ開発版を上書きできるようにする (番号が小さいと flutter run は
+// アンインストールして入れ直し、端末内のデータが消える)。分割ビルドは flutter が足すので足さない
+val abiVersionOf = mapOf("armeabi-v7a" to 1, "arm64-v8a" to 2, "x86" to 3, "x86_64" to 4)
+val singleAbiVersion = flutterTargetPlatforms
+    ?.singleOrNull()
+    ?.let { abiOf[it] }
+    ?.let { abiVersionOf[it] }
+    ?.takeIf { project.findProperty("split-per-abi")?.toString() != "true" }
+
 android {
     namespace = "com.kjranyone.futoji"
     // permission_handler_android 14.x が API 37 要求のため flutter.compileSdkVersion (36) から上書き
@@ -43,22 +63,14 @@ android {
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
         // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`
         // flag during build.
-        versionCode = flutter.versionCode
+        versionCode = flutter.versionCode + 1000 * (singleAbiVersion ?: 0)
         versionName = flutter.versionName
     }
 
     // flutter は --target-platform を指定しても abiFilters に全 ABI (arm/arm64/x64) を設定するため、
     // onnxruntime-android の他 ABI 用 .so (x86_64 20MB, armeabi-v7a 12MB) が APK に入ってしまう。
     // flutter が渡す -Ptarget-platform に含まれない ABI のネイティブライブラリを除外する。
-    val flutterTargetPlatforms = (project.findProperty("target-platform") as String?)
-        ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
     if (!flutterTargetPlatforms.isNullOrEmpty()) {
-        val abiOf = mapOf(
-            "android-arm" to "armeabi-v7a",
-            "android-arm64" to "arm64-v8a",
-            "android-x64" to "x86_64",
-            "android-x86" to "x86",
-        )
         val keep = flutterTargetPlatforms.mapNotNull { abiOf[it] }.toSet()
         if (keep.isNotEmpty()) {
             packaging {

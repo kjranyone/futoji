@@ -16,6 +16,7 @@
 //   PAPER_MODEL     ONNX モデル    (assets/models/paper_seg.onnx)
 //   ORT_DYLIB       ORT 共有ライブラリ (tools/ort/onnxruntime.dll)
 //   PAPER_EVAL_OUT  レポート出力先  (build/paper_eval)
+//   PAPER_DUMP_MASK 1 なら穴埋め後のマスク (256x256) も <id>_mask.png に書く
 //
 // データかライブラリが無い環境ではスキップする。
 import 'dart:convert';
@@ -73,6 +74,7 @@ void main() {
   // マスクと四角形の IoU の下限 (既定はアプリと同じ値)
   final minAgree = double.parse(
       _env('PAPER_MIN_AGREE', DocumentDetector.netMinMaskQuadIoU.toString()));
+  final dumpMask = _env('PAPER_DUMP_MASK', '0') == '1';
 
   final labelFiles = evalDir.existsSync()
       ? (evalDir
@@ -129,7 +131,17 @@ void main() {
           openRadius: openRadius,
           refineEdges: refineEdges,
           minMaskQuadIoU: minAgree,
-          onAgreement: (v) => agreement = v);
+          onAgreement: (v) => agreement = v,
+          onDebug: dumpMask
+              ? (input, mask, filled, fill) {
+                  final m = img.Image(width: 256, height: 256, numChannels: 1);
+                  for (int i = 0; i < filled.length; i++) {
+                    m.setPixelR(i % 256, i ~/ 256, filled[i]);
+                  }
+                  File('${outDir.path}/${id}_mask.png')
+                      .writeAsBytesSync(img.encodePng(m));
+                }
+              : null);
       // ignore: avoid_print
       print('agreement $id ${agreement?.toStringAsFixed(3) ?? '-'} '
           '${label.corners == null ? 'negative' : 'positive'}');

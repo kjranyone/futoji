@@ -159,14 +159,24 @@ function Get-TargetPlatform([string]$id) {
 # 端末の版より古い versionCode で入れると、インストールが失敗し、
 # flutter run はアプリをアンインストールして入れ直す (= 端末内のブックのデータが消える)。
 # ビルド前にこれを検出して止める。対処は pubspec.yaml の +ビルド番号 を上げること。
+#
+# 1 つの ABI だけのビルド (run / install) は、GitHub で配る分割 APK と同じく
+# versionCode に 1000 × ABI 番号が足される (android/app/build.gradle.kts)。
 function Assert-NoDowngrade([string]$id) {
     $installed = Get-InstalledVersionCode $id
-    $build = Get-PubspecBuildNumber
+    $pubspec = Get-PubspecBuildNumber
+    $abiVersion = switch (Get-TargetPlatform $id) {
+        'android-arm' { 1 }
+        'android-arm64' { 2 }
+        'android-x64' { 4 }
+    }
+    $build = $pubspec + 1000 * $abiVersion
     if ($installed -gt $build) {
+        $need = $installed - 1000 * $abiVersion
         throw @"
-端末の versionCode ($installed) が pubspec.yaml のビルド番号 ($build) より新しいため中止しました。
+端末の versionCode ($installed) がこれから入れる版 ($build = ビルド番号 $pubspec + $(1000 * $abiVersion)) より新しいため中止しました。
 このまま入れると flutter run はアプリをアンインストールして入れ直し、端末内のデータが消えます。
-pubspec.yaml の version の +$build を $installed より大きい値に上げてください。
+pubspec.yaml の version の +$pubspec を $need 以上に上げてください。
 "@
     }
     Write-Host "versionCode: 端末 $installed / ビルド $build" -ForegroundColor DarkGray

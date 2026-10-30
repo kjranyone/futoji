@@ -765,14 +765,20 @@ class DocumentDetector {
     //
     // まず元の辺 (凸包の辺) から 3% 以内の境界画素で当てはめる。重なった紙で紙の一部が
     // 欠けたマスクでも、見えている本当の辺が使われる。
-    // 元の辺の近くに十分な画素がなく、しかも辺の端 (凸包の角) が画像の縁にあるときは、
-    // マスクが角で机へ塊になってはみ出し、画像の縁まで達している (紙の外の明るい机が縁まで
-    // 続く場面。実機 2026-10-30)。本当の紙の辺は内側にあるので、内へ 15% までの境界画素から、
-    // 2 点を通る直線のうち 2 画素以内の画素が最も多いもの (決定的な RANSAC) を選ぶ。
-    // 角が縁にないときは探さない: 重なった紙で欠けたマスクでは、内側の直線は上の紙の縁で
-    // あり、本当の辺ではない (評価の hard_0167)。
+    // 辺の端 (凸包の角) が画像の縁の近く (3% 以内) にあるときは、マスクが角で机へ塊になって
+    // はみ出し、画像の縁の近くまで達している (紙の外の明るい机が縁まで続く場面。実機
+    // 2026-10-30)。凸包の辺は塊の先端を通る斜めの線で、本当の紙の辺は内側にある。そこで
+    // 内へ 15% までの境界画素から、2 点を通る直線のうち 2 画素以内の画素が最も多いもの
+    // (決定的な RANSAC) を選ぶ。凸包の辺が本当の辺なら、その上の画素が最も多いので選ばれる。
+    // 塊の先端は縁にちょうど届くとは限らない (ライブ検出では縁から 3 画素手前で止まっていた)。
+    // 角が縁から離れているときは探さない: 重なった紙で欠けたマスクでは、内側の直線は上の紙の
+    // 縁であり、本当の辺ではない (評価の hard_0167)。
+    final borderMargin = math.max(2.0, math.min(w, h) * 0.03);
     bool onBorder(Point<double> p) =>
-        p.x <= 1 || p.y <= 1 || p.x >= w - 2 || p.y >= h - 2;
+        p.x <= borderMargin ||
+        p.y <= borderMargin ||
+        p.x >= w - 1 - borderMargin ||
+        p.y >= h - 1 - borderMargin;
     final lines = <(Offset, Offset)?>[];
     for (int e = 0; e < 4; e++) {
       final a = q[e];
@@ -803,10 +809,6 @@ class DocumentDetector {
       }
       cand.sort((p, q) => p.$1.compareTo(q.$1));
       final pts = <Point<double>>[for (final c in cand) c.$2];
-      var nearHull = 0;
-      for (final p in pts) {
-        if (((p.x - a.x) * -ey + (p.y - a.y) * ex).abs() <= outTol) nearHull++;
-      }
       int countNear(double ox, double oy, double ux, double uy) {
         var n = 0;
         for (final p in pts) {
@@ -817,38 +819,43 @@ class DocumentDetector {
 
       var ox = a.x, oy = a.y, ux = ex, uy = ey;
       var tol = outTol;
-      if (nearHull < minPts) {
-      if (!onBorder(a) && !onBorder(b)) {
-        lines.add(null);
-        continue;
-      }
-      // 辺に沿って等間隔に選んだ点の組から、最も多くの候補が乗る直線を探す
-      final m = math.min(24, pts.length);
-      final picks = <Point<double>>[
-        for (int i = 0; i < m; i++) pts[(i * (pts.length - 1) / (m - 1)).round()],
-      ];
-      var bestN = -1;
-      for (int i = 0; i < m; i++) {
-        for (int j = i + 1; j < m; j++) {
-          final pi = picks[i], pj = picks[j];
-          final d = pi.distanceTo(pj);
-          if (d < len * 0.2) continue;
-          final vx = (pj.x - pi.x) / d, vy = (pj.y - pi.y) / d;
-          final n = countNear(pi.x, pi.y, vx, vy);
-          if (n > bestN) {
-            bestN = n;
-            ox = pi.x;
-            oy = pi.y;
-            ux = vx;
-            uy = vy;
+      if (onBorder(a) || onBorder(b)) {
+        // 辺に沿って等間隔に選んだ点の組から、最も多くの候補が乗る直線を探す
+        final m = math.min(24, pts.length);
+        final picks = <Point<double>>[
+          for (int i = 0; i < m; i++) pts[(i * (pts.length - 1) / (m - 1)).round()],
+        ];
+        var bestN = -1;
+        for (int i = 0; i < m; i++) {
+          for (int j = i + 1; j < m; j++) {
+            final pi = picks[i], pj = picks[j];
+            final d = pi.distanceTo(pj);
+            if (d < len * 0.2) continue;
+            final vx = (pj.x - pi.x) / d, vy = (pj.y - pi.y) / d;
+            final n = countNear(pi.x, pi.y, vx, vy);
+            if (n > bestN) {
+              bestN = n;
+              ox = pi.x;
+              oy = pi.y;
+              ux = vx;
+              uy = vy;
+            }
           }
         }
-      }
-      if (bestN < minPts) {
-        lines.add(null);
-        continue;
-      }
-      tol = 2.0;
+        if (bestN < minPts) {
+          lines.add(null);
+          continue;
+        }
+        tol = 2.0;
+      } else {
+        var nearHull = 0;
+        for (final p in pts) {
+          if (((p.x - a.x) * -ey + (p.y - a.y) * ex).abs() <= outTol) nearHull++;
+        }
+        if (nearHull < minPts) {
+          lines.add(null);
+          continue;
+        }
       }
       // 直線の近くの候補で全最小二乗をやり直す (初回は元の辺から 3% 以内、以降 2 画素以内)
       var ok = false;
@@ -901,19 +908,22 @@ class DocumentDetector {
     // 0.5 を足すと、正規化 (÷w) したときに画像の端が 0 と 1 に一致する。
     // 当てはめた角が元の角から外へ動くのは 5% まで (当てはめの失敗を防ぐ)。内側 (元の四角形の
     // 中) へは 25% まで認める: はみ出した塊は凸包を外へ広げるだけなので、本当の角は内側にある。
+    // 内側かどうかは 5% の余裕を持って見る: 塊の側の辺も引き直すと、新しい角は元の辺のわずかに
+    // 外 (数画素) に出ることがある (ライブ検出の実機 2026-10-30、左上の角が上辺の 1.5 画素外)。
     final maxMove = math.min(w, h) * 0.05;
     final maxInward = math.min(w, h) * 0.25;
     bool insideQuad(Point<double> p) {
-      var sign = 0.0;
       for (int i = 0; i < 4; i++) {
         final a = q[i], b = q[(i + 1) % 4];
-        final c = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-        if (c.abs() < 1e-9) continue;
-        if (sign == 0) {
-          sign = c.sign;
-        } else if (c.sign != sign) {
-          return false;
+        final len = a.distanceTo(b);
+        if (len < 1e-9) continue;
+        // 辺から重心と反対側 (外) への距離
+        var nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+        if (nx * (cx - a.x) + ny * (cy - a.y) > 0) {
+          nx = -nx;
+          ny = -ny;
         }
+        if ((p.x - a.x) * nx + (p.y - a.y) * ny > maxMove) return false;
       }
       return true;
     }
