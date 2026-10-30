@@ -46,6 +46,19 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  static const String _continuousFocusKey = 'continuous_focus';
+
+  /// カメラのピントを合わせ続けるか (設定画面、端末に保存)。既定のオフでは、開いたときに
+  /// 中央へ一度合わせたあとは固定し、画面をタップした所に合わせ直す
+  /// (端末によっては合わせ続けるとピントが行き来して撮りにくいため)。
+  bool get continuousFocus =>
+      DbService.settings.get(_continuousFocusKey, defaultValue: false) as bool;
+
+  Future<void> setContinuousFocus(bool value) async {
+    await DbService.settings.put(_continuousFocusKey, value);
+    notifyListeners();
+  }
+
   List<MusicDocument> _documents = <MusicDocument>[];
 
   /// 更新日の新しい順。

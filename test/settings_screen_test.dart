@@ -52,6 +52,7 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final app = AppState();
     expect(app.aiSharpen, isFalse);
+    expect(app.continuousFocus, isFalse, reason: '既定はタップでピント (合わせ続けない)');
     await tester.pumpWidget(ChangeNotifierProvider<AppState>.value(
       value: app,
       child: const MaterialApp(home: SettingsScreen()),
@@ -62,6 +63,7 @@ void main() {
       await tester.tap(find.text('検出改善用に切り抜き結果を保存'));
       await tester.tap(find.text('紙面検出の自己診断を許可'));
       await tester.tap(find.text('AI でくっきり'));
+      await tester.tap(find.text('ピントを合わせ続ける'));
       await Future<void>.delayed(const Duration(milliseconds: 200));
     });
     await tester.pump();
@@ -69,6 +71,7 @@ void main() {
     expect(TrainingCapture.enabled, isTrue);
     expect(SelfTest.enabled, isTrue);
     expect(app.aiSharpen, isTrue);
+    expect(app.continuousFocus, isTrue);
     final switches = tester.widgetList<SwitchListTile>(find.byType(SwitchListTile));
     expect(switches.every((s) => s.value), isTrue);
   });

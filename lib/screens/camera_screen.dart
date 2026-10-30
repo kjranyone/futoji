@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:camera/camera.dart';
@@ -75,6 +76,10 @@ class _CameraScreenState extends State<CameraScreen>
   final ValueNotifier<LiveOverlay> _live =
       ValueNotifier<LiveOverlay>(const LiveOverlay());
 
+  /// タップしてピントを合わせた所 (プレビュー正規化座標)。少しの間だけ印を出す。
+  final ValueNotifier<Offset?> _focusMark = ValueNotifier<Offset?>(null);
+  Timer? _focusMarkTimer;
+
   // ---- 自動撮影 ----
   bool _autoMode = false;
   final AutoCaptureController _auto = AutoCaptureController();
@@ -142,6 +147,8 @@ class _CameraScreenState extends State<CameraScreen>
     _controller?.dispose();
     _worker.dispose();
     _live.dispose();
+    _focusMarkTimer?.cancel();
+    _focusMark.dispose();
     _countdownTicker.dispose();
     _countdown.dispose();
     super.dispose();
@@ -239,11 +246,52 @@ class _CameraScreenState extends State<CameraScreen>
       // 端末ごとの向きの違いを実機ログで確かめられるようにする
       debugPrint('CameraScreen: sensor=$_sensorOrientation display=$_displayRotation '
           'front=$_frontCamera -> frame rotation $_frameRotation');
+      // ピント合わせ (1 秒ほどかかる) はプレビューを出してから、ライブ検出と並べて行う
+      unawaited(_applyFocusMode(controller));
       await _startImageStream(controller);
     } catch (e) {
       if (mounted) setState(() => _error = 'カメラを起動できませんでした: $e');
     } finally {
       _starting = false;
+    }
+  }
+
+  /// ピントの合わせ方を設定に合わせる。既定は中央へ一度合わせて固定し、あとはタップで
+  /// 合わせ直す (合わせ続けると、端末によってはピントが行き来して撮りにくい)。
+  /// CameraX のプラグインはカメラを開き直しても前の固定状態を覚えていて、同じモードの
+  /// 指定を読み飛ばすため、いったん auto に戻してから固定する。
+  Future<void> _applyFocusMode(CameraController controller) async {
+    final continuous = context.read<AppState>().continuousFocus;
+    try {
+      await controller.setFocusMode(FocusMode.auto);
+      if (!continuous) await controller.setFocusMode(FocusMode.locked);
+    } catch (e) {
+      // 固定焦点のカメラなど (ピントの指定は撮影に必須ではない)
+      debugPrint('CameraScreen: setFocusMode failed: $e');
+    }
+  }
+
+  /// タップした所 ([p]: プレビュー正規化座標) にピントを合わせる。
+  Future<void> _focusAt(Offset p) async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized || _busy) return;
+    if (!controller.value.focusPointSupported) return;
+    HapticFeedback.selectionClick();
+    _focusMark.value = p;
+    _focusMarkTimer?.cancel();
+    _focusMarkTimer = Timer(const Duration(milliseconds: 1200), () {
+      if (mounted) _focusMark.value = null;
+    });
+    final point = Offset(p.dx.clamp(0.0, 1.0), p.dy.clamp(0.0, 1.0));
+    try {
+      await controller.setFocusPoint(point);
+      // 合わせ損ねるとプラグインが固定に切り替わったことを覚えず、数秒後に合わせ続ける
+      // 動きへ戻るため、固定のときは改めて固定し直す
+      if (mounted && !context.read<AppState>().continuousFocus) {
+        await controller.setFocusMode(FocusMode.locked);
+      }
+    } catch (e) {
+      debugPrint('CameraScreen: setFocusPoint failed: $e');
     }
   }
 
@@ -562,6 +610,22 @@ class _CameraScreenState extends State<CameraScreen>
                     painter: _LiveQuadPainter(overlay),
                   ),
                 ),
+                // タップした所にピントを合わせる
+                LayoutBuilder(
+                  builder: (context, box) => GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapUp: (d) => _focusAt(Offset(
+                        d.localPosition.dx / box.maxWidth,
+                        d.localPosition.dy / box.maxHeight)),
+                  ),
+                ),
+                IgnorePointer(
+                  child: ValueListenableBuilder<Offset?>(
+                    valueListenable: _focusMark,
+                    builder: (context, p, _) =>
+                        p == null ? const SizedBox.shrink() : _FocusMark(at: p),
+                  ),
+                ),
                 // 枠の中央: カウントダウンの数字 / 撮影済みの ✓
                 IgnorePointer(
                   child: ValueListenableBuilder<LiveOverlay>(
@@ -601,7 +665,7 @@ class _CameraScreenState extends State<CameraScreen>
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Text(
-                      '用紙を枠に収めて撮影',
+                      '用紙を枠に収めて撮影・タップでピント',
                       style: TextStyle(color: Colors.white70, fontSize: 12),
                     ),
                   ),
@@ -903,6 +967,36 @@ class _QuadBadge extends StatelessWidget {
       cy += c.dy / 4;
     }
     return Align(alignment: Alignment(cx * 2 - 1, cy * 2 - 1), child: child);
+  }
+}
+
+/// タップでピントを合わせた所の印 (出たときに少し縮んで、合わせたことを見せる)。
+class _FocusMark extends StatelessWidget {
+  const _FocusMark({required this.at});
+
+  /// プレビュー正規化座標。
+  final Offset at;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment(at.dx * 2 - 1, at.dy * 2 - 1),
+      child: TweenAnimationBuilder<double>(
+        key: ValueKey<Offset>(at),
+        tween: Tween<double>(begin: 1.4, end: 1),
+        duration: const Duration(milliseconds: 200),
+        builder: (context, scale, child) =>
+            Transform.scale(scale: scale, child: child),
+        child: Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: const Color(0xFFFFC107), width: 2),
+          ),
+        ),
+      ),
+    );
   }
 }
 

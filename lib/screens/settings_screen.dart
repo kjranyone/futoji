@@ -321,6 +321,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onChanged: (v) => context.read<AppState>().setDewarp(v),
             ),
             const Divider(),
+            _sectionHeader(theme, '撮影'),
+            SwitchListTile(
+              secondary: const Icon(Icons.center_focus_strong_outlined),
+              title: const Text('ピントを合わせ続ける'),
+              subtitle: const Text('オフのときは、カメラを開いたときに中央へ一度ピントを'
+                  '合わせ、あとは画面をタップした所に合わせます。オンにすると常に'
+                  '合わせ直します (端末によってはピントが行き来して撮りにくくなります)'),
+              value: context.watch<AppState>().continuousFocus,
+              onChanged: (v) => context.read<AppState>().setContinuousFocus(v),
+            ),
+            const Divider(),
             ListTile(
               leading: const Icon(Icons.info_outline),
               title: const Text('このアプリについて'),
