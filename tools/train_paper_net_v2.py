@@ -17,6 +17,10 @@ v1 (train_paper_net.py) からの変更点:
 - --color で入力を 1x3x256x256 (RGB 0..1) にする。白い紙とベージュの机のように
   明るさが近く色味だけが違う場面を見分けるため。全体の色温度のずれと、明るさが紙に
   近い暖色の机も合成する。保存合成・train_real (灰色) は R=G=B として混ぜる
+- --p-fold / --p-corner-object / --p-same: 角の折り返し・めくれ、角を覆うスマホ・カップ・手、
+  同じ紙 (同じ色) の重なり。正解はどれも一番上の紙全体の四角形 (隠れた角・欠けた角を含む)
+- --color-pairs で色付きの学習ペア (training_data/train_hard_gen: 生成難例に四隅を手で付けた
+  もの) を RGB のまま混ぜる。評価用の eval_hard_gen は混ぜない
 
 使い方:
   tools/.venv/Scripts/python tools/train_paper_net_v2.py --steps 4000
@@ -37,14 +41,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 
-from synthetic_variations import (PROFILE_DEFAULTS, camera_effects, object_occluder,
-                                  procedural_background, procedural_paper)
+from synthetic_variations import (PROFILE_DEFAULTS, camera_effects, corner_object, fold_corner,
+                                  object_occluder, procedural_background, procedural_paper)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 PAPER_DIR = os.path.join(ROOT, "training_data", "paper_photos")
 REAL_DIR = os.path.join(ROOT, "training_data", "real_captures")
 REAL_PAIRS_DIR = os.path.join(ROOT, "training_data", "train_real")
+COLOR_PAIRS_DIRS = [os.path.join(ROOT, "training_data", "train_hard_gen")]
 # 保存済み合成セット (docs/datasets/README.md)。奇数 id だけを学習に使う
 SAVED_SYNTH_DIRS = [
     os.path.join(ROOT, "training_data", "synthetic_diverse_2026-10-02"),
@@ -203,8 +208,10 @@ def target_quad(rng, W, H, src_q, allow_out, area=None, center=None):
     return q + [cx, cy]
 
 
-def paste_paper(rng, canvas, paper, allow_out, area=None, center=None, p_panel=0.0):
-    """紙を canvas に貼り、(canvas, mask(0/1 float), dst_quad) を返す。"""
+def paste_paper(rng, canvas, paper, allow_out, area=None, center=None, p_panel=0.0, p_fold=0.0):
+    """紙を canvas に貼り、(canvas, mask(0/1 float), dst_quad) を返す。
+
+    p_fold の確率で角を 1 つ折り返す/めくる (fold_corner)。mask は紙全体の四角形のまま。"""
     H, W = canvas.shape[:2]
     _, im, src_q = paper
     dst = target_quad(rng, W, H, src_q, allow_out, area=area, center=center)
@@ -248,6 +255,8 @@ def paste_paper(rng, canvas, paper, allow_out, area=None, center=None, p_panel=0
             warped = warped * (1 - a[..., None]) + color[None, None, :] * a[..., None]
     # 紙自体の明るさ・色味 (照明の違い)
     warped = warped * rng.uniform(0.75, 1.15) * rng.uniform(0.93, 1.07, 3)
+    if p_fold > 0 and rng.random() < p_fold:
+        return fold_corner(rng, canvas, warped, alpha, dst), alpha, dst
     canvas = canvas * (1 - alpha[..., None]) + warped * alpha[..., None]
     return canvas, alpha, dst
 
@@ -328,8 +337,19 @@ def _pick(rng, papers, p_procedural=0.0):
     return papers[int(rng.integers(len(papers)))]
 
 
+def add_corner_object(rng, canvas, mask, dst):
+    """主な紙の角のそばにスマホ・カップ・手を置く。半分は角を覆い、半分は紙の下にあって
+    角は見えている。覆う場面だけだと「角のそばの物 = 紙が下に続く」と覚え、実写で紙の
+    そばにあるカメラや台まで紙に含めた (v6)。正解はどちらも紙全体の四角形。"""
+    covered = corner_object(rng, canvas, dst)
+    if rng.random() < 0.5:
+        return covered
+    return covered * (1 - mask[..., None]) + canvas * mask[..., None]
+
+
 def paste_scene(rng, canvas, papers, p_multi, p_occluder, p_panel=0.0,
-                p_procedural=0.0, synth_profile="legacy", p_clipped=0.0, p_stack=0.0):
+                p_procedural=0.0, synth_profile="legacy", p_clipped=0.0, p_stack=0.0,
+                p_fold=0.0, p_corner_object=0.0, p_same=0.0):
     """紙を貼る。正解マスクは「主な 1 枚」の四角形全体だけ。
 
     - 単独 (既定): 1 枚だけ貼る
@@ -343,9 +363,25 @@ def paste_scene(rng, canvas, papers, p_multi, p_occluder, p_panel=0.0,
       切れているケースへの汎化)
     - 遮蔽物 (p_occluder): 主な紙の上に小さな紙 (付箋・カード相当) を載せる。
       正解は隠れた部分も含めた主な紙の四角形全体 (四隅を求めたいので)
+    - 同じ紙 (p_same): 複数枚・束のとき、下の紙を主な紙と同じ素材にする (同じ色紙の重なり)
+    - 角の折り返し・めくれ (p_fold) と角を覆う物 (p_corner_object) は、フレームで切れる場合
+      以外の主な紙に重ねてかける
     """
     H, W = canvas.shape[:2]
     u = rng.random()
+    if u < p_multi + p_stack:
+        same = _pick(rng, papers, p_procedural) if p_same > 0 and rng.random() < p_same else None
+
+        def under():
+            return same if same is not None else _pick(rng, papers, p_procedural)
+
+        def main():
+            return same if same is not None else _pick(rng, papers, p_procedural)
+
+        def finish(out):
+            if p_corner_object > 0 and rng.random() < p_corner_object:
+                return add_corner_object(rng, *out), out[1], out[2]
+            return out
     if u < p_multi:
         main_area = rng.uniform(0.12, 0.55)
         cx, cy = rng.uniform(0.3, 0.7) * W, rng.uniform(0.3, 0.7) * H
@@ -354,10 +390,10 @@ def paste_scene(rng, canvas, papers, p_multi, p_occluder, p_panel=0.0,
             ang = rng.uniform(0, 2 * np.pi)
             dist = rng.uniform(0.2, 0.75) * side
             bc = (cx + math.cos(ang) * dist, cy + math.sin(ang) * dist)
-            canvas, _, _ = paste_paper(rng, canvas, _pick(rng, papers, p_procedural), True,
+            canvas, _, _ = paste_paper(rng, canvas, under(), True,
                                        area=main_area * rng.uniform(0.6, 1.05), center=bc)
-        return paste_paper(rng, canvas, _pick(rng, papers, p_procedural), False,
-                           area=main_area, center=(cx, cy), p_panel=p_panel)
+        return finish(paste_paper(rng, canvas, main(), False,
+                                  area=main_area, center=(cx, cy), p_panel=p_panel, p_fold=p_fold))
     if u < p_multi + p_stack:
         # 下の紙は手前の紙と同サイズ ±15% で、小さな回転・平行移動の差だけつける
         main_area = rng.uniform(0.15, 0.5)
@@ -367,10 +403,10 @@ def paste_scene(rng, canvas, papers, p_multi, p_occluder, p_panel=0.0,
             ang = rng.uniform(0, 2 * np.pi)
             dist = rng.uniform(0.05, 0.35) * side
             bc = (cx + math.cos(ang) * dist, cy + math.sin(ang) * dist)
-            canvas, _, _ = paste_paper(rng, canvas, _pick(rng, papers, p_procedural), True,
+            canvas, _, _ = paste_paper(rng, canvas, under(), True,
                                        area=main_area * rng.uniform(0.85, 1.15), center=bc)
-        return paste_paper(rng, canvas, _pick(rng, papers, p_procedural), False,
-                           area=main_area, center=(cx, cy), p_panel=p_panel)
+        return finish(paste_paper(rng, canvas, main(), False,
+                                  area=main_area, center=(cx, cy), p_panel=p_panel, p_fold=p_fold))
     if u < p_multi + p_stack + p_clipped:
         # 大きめの紙を意図的にキャンバス外へ出す。正解マスクは paste_paper の
         # alpha (= キャンバス内の可視部分)。可視面積が 92% 超 (紙が全面を覆う)
@@ -394,7 +430,9 @@ def paste_scene(rng, canvas, papers, p_multi, p_occluder, p_panel=0.0,
                 best = (vis, out)
         return best[1]
     canvas, mask, dst = paste_paper(rng, canvas, _pick(rng, papers, p_procedural), rng.random() < 0.15,
-                                    p_panel=p_panel)
+                                    p_panel=p_panel, p_fold=p_fold)
+    if p_corner_object > 0 and rng.random() < p_corner_object:
+        canvas = add_corner_object(rng, canvas, mask, dst)
     if u < p_multi + p_stack + p_clipped + p_occluder:
         if synth_profile == "diverse" and rng.random() < 0.5:
             return object_occluder(rng, canvas, dst), mask, dst
@@ -426,13 +464,15 @@ def synthesis_options(synth_profile="legacy", **overrides):
 
 def make_composite(rng, papers, bgs, want_canvas=False, p_multi=None, p_occluder=None,
                    p_panel=None, p_procedural=None, p_negative=None, synth_profile="legacy",
-                   p_clipped=None, p_stack=None, color=False):
+                   p_clipped=None, p_stack=None, p_fold=None, p_corner_object=None, p_same=None,
+                   color=False):
     """1 サンプル。want_canvas=True なら評価書き出し用に canvas と四隅も返す。
 
     color=False は灰色 [H,W]、color=True は RGB [H,W,3] (どちらも 0..1) を返す。"""
     opts = synthesis_options(synth_profile, p_multi=p_multi, p_occluder=p_occluder,
                              p_panel=p_panel, p_procedural=p_procedural,
-                             p_negative=p_negative, p_clipped=p_clipped, p_stack=p_stack)
+                             p_negative=p_negative, p_clipped=p_clipped, p_stack=p_stack,
+                             p_fold=p_fold, p_corner_object=p_corner_object, p_same=p_same)
     W, H = rand_canvas(rng)
     r = rng.random()
     dst = None
@@ -465,7 +505,9 @@ def make_composite(rng, papers, bgs, want_canvas=False, p_multi=None, p_occluder
                                             opts["p_occluder"], opts["p_panel"],
                                             opts["p_procedural"], synth_profile,
                                             p_clipped=opts["p_clipped"],
-                                            p_stack=opts["p_stack"])
+                                            p_stack=opts["p_stack"], p_fold=opts["p_fold"],
+                                            p_corner_object=opts["p_corner_object"],
+                                            p_same=opts["p_same"])
     canvas = photometric(rng, canvas)
     if color:
         canvas = white_balance(rng, canvas)
@@ -615,17 +657,18 @@ def iou_score(logits, y):
     return (inter / union).item() if union > 0 else 1.0
 
 
-def load_real_pairs(pair_dir=REAL_PAIRS_DIR, size=IMG):
+def load_real_pairs(pair_dir=REAL_PAIRS_DIR, size=IMG, color=False):
     """training_data/train_real (images/ + masks/) の実写ペア。
 
     promote_captures.py がアプリの補正済み四隅から作ったもの。ネガティブ
     (空マスク) も含む。フォルダが無い/空なら (None, None, None)。
     manifest.json の source に応じたサンプリング重みも返す (難例を厚く)。
+    color=True なら RGB [N,H,W,3] で読む (train_hard_gen)。
     """
     img_dir = os.path.join(pair_dir, "images")
     mask_dir = os.path.join(pair_dir, "masks")
     if not os.path.isdir(mask_dir):
-        return None, None, None
+        return None, None, None, None
     manifest = {}
     mp = os.path.join(pair_dir, "manifest.json")
     if os.path.exists(mp):
@@ -643,21 +686,24 @@ def load_real_pairs(pair_dir=REAL_PAIRS_DIR, size=IMG):
         jpg = os.path.join(img_dir, stem + ".jpg")
         if not os.path.exists(jpg):
             continue
-        im = cv2.imread(jpg, cv2.IMREAD_GRAYSCALE)
+        im = cv2.imread(jpg, cv2.IMREAD_COLOR if color else cv2.IMREAD_GRAYSCALE)
         mk = cv2.imread(os.path.join(mask_dir, f), cv2.IMREAD_GRAYSCALE)
         if im is None or mk is None or im.shape[:2] != mk.shape[:2]:
             print(f"warn: real pair {stem} を読み飛ばし (画像/マスク不正)")
             continue
         im = cv2.resize(im, (size, size), interpolation=cv2.INTER_AREA)
         mk = cv2.resize(mk, (size, size), interpolation=cv2.INTER_NEAREST)
+        if color:
+            im = im[..., ::-1]
         xs.append(im.astype(np.float32) / 255.0)
         ys.append((mk > 127).astype(np.float32))
         ids.append(stem)
         ws.append(weight_by_source.get(manifest.get(stem, {}).get("source", ""), 1.0))
     if not xs:
-        return None, None, None
+        return None, None, None, None
     w = np.asarray(ws, dtype=np.float64)
-    return np.stack(xs)[..., None], np.stack(ys)[..., None], ids, w / w.sum()
+    x = np.stack(xs)
+    return (x if color else x[..., None]), np.stack(ys)[..., None], ids, w / w.sum()
 
 
 def augment_real_pair(x, y, rng):
@@ -844,6 +890,12 @@ def main():
                     help="主な紙をフレーム外へ出す割合 (正解はキャンバス内の可視部分)")
     ap.add_argument("--p-stack", type=float, default=None,
                     help="主な紙の下にずらした紙を重ねる割合 (正解は手前の 1 枚)")
+    ap.add_argument("--p-fold", type=float, default=None,
+                    help="主な紙の角を折り返す/めくる確率")
+    ap.add_argument("--p-corner-object", type=float, default=None,
+                    help="主な紙の角をスマホ・カップ・手で覆う確率")
+    ap.add_argument("--p-same", type=float, default=None,
+                    help="複数枚・束で下の紙を主な紙と同じ素材にする確率")
     ap.add_argument("--init-pth", default="", help="この重みから学習を始める (例: build/paper_seg_v2.pth)")
     ap.add_argument("--color", action="store_true",
                     help="入力を RGB 3ch にする (1x3x256x256)。灰色のモデルの重みから始めてもよい")
@@ -855,12 +907,18 @@ def main():
                     help="バッチに混ぜる保存済み合成セット (奇数 id のみ使用)")
     ap.add_argument("--synth-ratio", type=float, default=0.4,
                     help="バッチ中の保存済み合成セットの割合 (0 で無効、残りはその場生成)")
+    ap.add_argument("--color-pairs", nargs="*", default=COLOR_PAIRS_DIRS,
+                    help="RGB のまま混ぜる学習ペア (images/ + masks/)。--color のときだけ使う")
+    ap.add_argument("--color-pair-ratio", type=float, default=0.0,
+                    help="バッチ中の色付き学習ペアの割合 (0 で無効)")
     args = ap.parse_args()
     try:
         options = synthesis_options(args.synth_profile, p_multi=args.p_multi,
                                     p_occluder=args.p_occluder, p_panel=args.p_panel,
                                     p_procedural=args.p_procedural, p_negative=args.p_negative,
-                                    p_clipped=args.p_clipped, p_stack=args.p_stack)
+                                    p_clipped=args.p_clipped, p_stack=args.p_stack,
+                                    p_fold=args.p_fold, p_corner_object=args.p_corner_object,
+                                    p_same=args.p_same)
     except ValueError as exc:
         ap.error(str(exc))
     if args.preview < 0 or args.export_synth < 0:
@@ -914,12 +972,28 @@ def main():
             print(f"saved synth: {name}: {c['used']} 組 (紙あり {c['positive']} / 紙なし "
                   f"{c['negative']}, holdout {c['holdout_excluded']} は除外)")
         print(f"saved synth: 計 {len(sx)} 組をバッチの {args.synth_ratio:.0%} に混合")
+    cx_pairs = cy_pairs = None
+    color_summary = {}
+    if args.color_pair_ratio > 0:
+        if not args.color:
+            ap.error("--color-pair-ratio は --color と一緒に使う")
+        parts = []
+        for d in args.color_pairs:
+            px, py, pids, _ = load_real_pairs(d, color=True)
+            if px is None:
+                ap.error(f"色付きの学習ペアがありません: {d}")
+            parts.append((px, py))
+            color_summary[os.path.relpath(d, os.path.join(ROOT, "training_data")).replace(os.sep, "/")] = len(px)
+        cx_pairs = np.concatenate([p[0] for p in parts])
+        cy_pairs = np.concatenate([p[1] for p in parts])
+        print(f"color pairs: {color_summary} をバッチの {args.color_pair_ratio:.0%} に混合")
     n_real = int(round(args.batch * args.real_ratio)) if use_real else 0
     n_saved = int(round(args.batch * args.synth_ratio)) if sx is not None else 0
-    if n_real + n_saved > args.batch:
-        ap.error("--real-ratio と --synth-ratio の合計が 1 を超えています")
-    print(f"batch {args.batch}: その場生成 {args.batch - n_real - n_saved} / 保存合成 {n_saved}"
-          f" / train_real {n_real}")
+    n_color = int(round(args.batch * args.color_pair_ratio)) if cx_pairs is not None else 0
+    if n_real + n_saved + n_color > args.batch:
+        ap.error("--real-ratio・--synth-ratio・--color-pair-ratio の合計が 1 を超えています")
+    print(f"batch {args.batch}: その場生成 {args.batch - n_real - n_saved - n_color} / 保存合成 {n_saved}"
+          f" / train_real {n_real} / 色付きペア {n_color}")
     saved_seen = np.zeros(len(sx), dtype=np.int64) if sx is not None else None
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     warm = 200
@@ -945,6 +1019,9 @@ def main():
             saved_seen[picks] += 1
             x, y = mix_real_pairs(x, y, sx[picks], sy[picks], real_rng, 1.0,
                                   slots=slots[n_real:n_real + n_saved])
+        if n_color:
+            x, y = mix_real_pairs(x, y, cx_pairs, cy_pairs, real_rng, 1.0,
+                                  slots=slots[n_real + n_saved:n_real + n_saved + n_color])
         logits = model(x)
         loss = bce(logits, y) + dice_loss(logits, y)
         opt.zero_grad()
@@ -980,9 +1057,10 @@ def main():
     record = dict(out=os.path.basename(args.out), init=args.init_pth or "imagenet",
                   color=args.color,
                   steps=args.steps, batch=args.batch, lr=args.lr, synthesis=options,
-                  batch_split=dict(onthefly=args.batch - n_real - n_saved, saved=n_saved,
-                                   train_real=n_real),
-                  train_real=len(rx) if use_real else 0, saved_synth=saved_summary)
+                  batch_split=dict(onthefly=args.batch - n_real - n_saved - n_color, saved=n_saved,
+                                   train_real=n_real, color_pairs=n_color),
+                  train_real=len(rx) if use_real else 0, saved_synth=saved_summary,
+                  color_pairs=color_summary)
     if saved_seen is not None:
         record["saved_synth_coverage"] = dict(
             seen_at_least_once=int((saved_seen > 0).sum()), total=len(saved_seen),

@@ -11,8 +11,9 @@ import cv2
 import numpy as np
 
 import train_paper_net_v2 as training
-from synthetic_variations import (BACKGROUND_KINDS, PAPER_KINDS, camera_effects,
-                                  object_occluder, procedural_background, procedural_paper)
+from synthetic_variations import (BACKGROUND_KINDS, CORNER_OBJECT_KINDS, FOLD_KINDS, PAPER_KINDS,
+                                  camera_effects, corner_object, fold_corner, object_occluder,
+                                  procedural_background, procedural_paper)
 
 
 class SyntheticVariationsTest(unittest.TestCase):
@@ -105,6 +106,71 @@ class SyntheticVariationsTest(unittest.TestCase):
                     found = True
                     break
             self.assertTrue(found)
+
+    def test_folded_corner_and_corner_objects_keep_full_main_page(self):
+        quad = np.array([[60, 50], [200, 50], [200, 200], [60, 200]], np.float64)
+        canvas = np.full((256, 256, 3), 0.2, np.float32)
+        with patch.object(training, "target_quad", return_value=quad):
+            plain, full, _ = training.paste_paper(np.random.default_rng(3), canvas,
+                                                 self.papers[0], False)
+            for seed in range(4):
+                with self.subTest(seed=seed):
+                    folded, mask, dst = training.paste_paper(np.random.default_rng(seed), canvas,
+                                                             self.papers[0], False, p_fold=1)
+                    # 正解は欠けた・折り返した角も含む紙全体の四角形
+                    np.testing.assert_array_equal(mask, full)
+                    np.testing.assert_array_equal(dst, quad)
+        for kind in FOLD_KINDS:
+            with self.subTest(fold=kind):
+                bg = np.full((256, 256, 3), 0.2, np.float32)
+                paper = np.full((256, 256, 3), 0.9, np.float32)
+                out = fold_corner(np.random.default_rng(1), bg, paper, full, quad, kind=kind)
+                self.assertEqual(out.dtype, np.float32)
+                self.assertTrue(((out >= 0) & (out <= 1)).all())
+                # 角のどこかで背景 (暗い) が見える
+                corners = [out[51:56, 61:66], out[51:56, 195:200], out[195:200, 195:200],
+                           out[195:200, 61:66]]
+                self.assertLess(min(float(c.mean()) for c in corners), 0.5)
+        for kind in CORNER_OBJECT_KINDS:
+            with self.subTest(corner_object=kind):
+                out = corner_object(np.random.default_rng(2), plain, quad, kind=kind)
+                self.assertEqual(out.shape, plain.shape)
+                self.assertTrue(((out >= 0) & (out <= 1)).all())
+                self.assertGreater(np.abs(out - plain)[full > 0.5].sum(), 0)
+        with self.assertRaises(ValueError):
+            fold_corner(np.random.default_rng(1), canvas, canvas, full, quad, kind="tear")
+
+    def test_corner_object_is_either_over_or_under_the_page(self):
+        quad = np.array([[60, 50], [200, 50], [200, 200], [60, 200]], np.float64)
+        canvas = np.full((256, 256, 3), 0.2, np.float32)
+        with patch.object(training, "target_quad", return_value=quad):
+            plain, full, _ = training.paste_paper(np.random.default_rng(3), canvas,
+                                                 self.papers[0], False)
+        over = under = 0
+        for seed in range(16):
+            out = training.add_corner_object(np.random.default_rng(seed), plain, full, quad)
+            if np.array_equal(out[full == 1], plain[full == 1]):
+                under += 1  # 紙の下: 紙は元のまま、外側だけ変わる
+                self.assertGreater(np.abs(out - plain)[full == 0].sum(), 0)
+            else:
+                over += 1
+        self.assertGreater(over, 0)
+        self.assertGreater(under, 0)
+
+    def test_same_paper_stack_reuses_main_paper(self):
+        canvas = np.full((256, 256, 3), 0.2, np.float32)
+        papers = [procedural_paper(np.random.default_rng(i), kind="text") for i in range(5)]
+        used = []
+
+        def fake(rng, cv, paper, *args, **kwargs):
+            used.append(paper[0] + str(id(paper)))
+            return cv, np.zeros((256, 256), np.float32), np.zeros((4, 2))
+
+        with patch.object(training, "paste_paper", side_effect=fake):
+            training.paste_scene(np.random.default_rng(4), canvas, papers, 0, 0, p_stack=1,
+                                 p_same=1)
+        self.assertGreater(len(used), 1)
+        self.assertEqual(len(set(used)), 1)
 
     def test_export_can_be_read_and_does_not_overwrite(self):
         with tempfile.TemporaryDirectory() as temp, \
