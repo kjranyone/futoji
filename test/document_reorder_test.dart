@@ -106,6 +106,37 @@ void main() {
     expect(find.text('完了'), findsNothing, reason: '通常表示に戻る');
   });
 
+  Future<void> finish(WidgetTester tester) async {
+    await tester.runAsync(() async {
+      await tester.tap(find.text('完了'));
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    });
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('タップで選んだ複数ページを、ドラッグでまとめて動かす', (tester) async {
+    await openReorderMode(tester);
+    await tester.tap(find.text('1ページ目'));
+    await tester.tap(find.text('2ページ目'));
+    await tester.pumpAndSettle();
+    expect(find.text('2ページを選択中'), findsOneWidget);
+
+    // A をつまんで C の下へ置くと、選んだ A・B が元の順のまま C の下へ並ぶ
+    await dragFirstToLast(tester);
+    await finish(tester);
+    expect(savedOrder(), <String>['C', 'A', 'B']);
+  });
+
+  testWidgets('選んだページを先頭へまとめて送る', (tester) async {
+    await openReorderMode(tester);
+    await tester.tap(find.text('3ページ目'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('先頭へ'));
+    await tester.pumpAndSettle();
+    await finish(tester);
+    expect(savedOrder(), <String>['C', 'A', 'B']);
+  });
+
   testWidgets('並び替えをやめると保存しない (変更があれば確認する)', (tester) async {
     await openReorderMode(tester);
     await dragFirstToLast(tester);

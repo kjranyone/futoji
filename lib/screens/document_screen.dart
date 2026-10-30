@@ -42,6 +42,12 @@ class _DocumentScreenState extends State<_DocumentView> {
   /// 並び替えモード中の並び (null = 通常表示)。「完了」まで保存しない。
   List<MusicPage>? _reorder;
 
+  /// 並び替えモードで選んだページの id。選んだページをドラッグすると、まとめて動く。
+  final Set<String> _selected = <String>{};
+
+  /// ドラッグ中のページの id (まとめて動かすとき、ほかの選択中ページを薄くする)。
+  String? _dragging;
+
   @override
   void initState() {
     super.initState();
@@ -151,7 +157,10 @@ class _DocumentScreenState extends State<_DocumentView> {
   void _startReorder() {
     final pages = context.read<AppState>().cachedPages(widget.document.id) ??
         const <MusicPage>[];
-    setState(() => _reorder = List<MusicPage>.of(pages));
+    setState(() {
+      _reorder = List<MusicPage>.of(pages);
+      _selected.clear();
+    });
   }
 
   bool get _reorderChanged {
@@ -163,12 +172,47 @@ class _DocumentScreenState extends State<_DocumentView> {
     return false;
   }
 
+  /// [from] のページを [to] へ動かす。選択中のページをドラッグしたときは、選択中の
+  /// ページを元の並び順のまま、置いた位置へまとめて移す。
   void _moveInReorder(int from, int to) {
     setState(() {
       final list = _reorder!;
-      list.insert(to, list.removeAt(from));
+      final group = <MusicPage>[
+        for (final p in list)
+          if (_selected.contains(p.id)) p,
+      ];
+      final dragged = list.removeAt(from);
+      list.insert(to, dragged);
+      if (group.length < 2 || !_selected.contains(dragged.id)) return;
+      list.removeWhere((p) => p != dragged && _selected.contains(p.id));
+      final at = list.indexOf(dragged);
+      list.replaceRange(at, at + 1, group);
     });
   }
+
+  /// 選択中のページを、元の並び順のまま先頭か末尾へまとめて移す。
+  void _moveSelectedTo({required bool start}) {
+    setState(() {
+      final list = _reorder!;
+      final group = <MusicPage>[
+        for (final p in list)
+          if (_selected.contains(p.id)) p,
+      ];
+      list.removeWhere((p) => _selected.contains(p.id));
+      list.insertAll(start ? 0 : list.length, group);
+    });
+  }
+
+  void _toggleSelected(MusicPage page) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      if (!_selected.remove(page.id)) _selected.add(page.id);
+    });
+  }
+
+  /// ドラッグで一緒に動くページ数。
+  int _dragGroupSize(MusicPage page) =>
+      _selected.contains(page.id) ? _selected.length : 1;
 
   Future<void> _finishReorder() async {
     final list = _reorder;
@@ -177,7 +221,13 @@ class _DocumentScreenState extends State<_DocumentView> {
       await context.read<AppState>().reorderPages(widget.document, list);
       if (mounted) showSnackBar(context, '並び順を保存しました');
     }
-    if (mounted) setState(() => _reorder = null);
+    if (mounted) setState(_leaveReorder);
+  }
+
+  void _leaveReorder() {
+    _reorder = null;
+    _selected.clear();
+    _dragging = null;
   }
 
   /// 変更があれば確認してから並び替えモードを抜ける (保存しない)。
@@ -202,7 +252,7 @@ class _DocumentScreenState extends State<_DocumentView> {
       );
       if (discard != true) return;
     }
-    if (mounted) setState(() => _reorder = null);
+    if (mounted) setState(_leaveReorder);
   }
 
   Widget _buildReorderList(ThemeData theme, List<MusicPage> list) {
@@ -211,7 +261,8 @@ class _DocumentScreenState extends State<_DocumentView> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
           child: Text(
-            'ドラッグして順番を入れ替え、「完了」で保存します',
+            'ドラッグして順番を入れ替え、「完了」で保存します。'
+            'タップして選んだページは、まとめて動かせます',
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
@@ -223,66 +274,145 @@ class _DocumentScreenState extends State<_DocumentView> {
             itemCount: list.length,
             onReorderItem: _moveInReorder,
             // 持ち上げたとき・置いたときに軽く振動して、つまめたことを指で分かるようにする
-            onReorderStart: (_) => HapticFeedback.selectionClick(),
-            onReorderEnd: (_) => HapticFeedback.lightImpact(),
-            itemBuilder: (context, i) {
-              final p = list[i];
-              final moved = p.index != i;
-              return ReorderableDelayedDragStartListener(
-                key: ValueKey<String>(p.id),
-                index: i,
-                child: Card(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
-                    child: Row(
-                      children: <Widget>[
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: SizedBox(
-                            width: 66,
-                            height: 88,
-                            child: Image.file(
-                              File(p.thumbPath),
-                              fit: BoxFit.cover,
-                              cacheWidth: 160,
-                              frameBuilder: fadeInImageFrame,
-                              errorBuilder: (_, _, _) => Container(
-                                color: theme.colorScheme.surfaceContainerHighest,
-                                child: const Icon(Icons.broken_image_outlined),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: <Widget>[
-                              Text('${i + 1}ページ目',
-                                  style: theme.textTheme.titleMedium),
-                              if (moved)
-                                Text('元は ${p.index + 1}ページ目',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                        color: theme.colorScheme.primary)),
-                            ],
-                          ),
-                        ),
-                        ReorderableDragStartListener(
-                          index: i,
-                          child: const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Icon(Icons.drag_handle),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+            onReorderStart: (i) {
+              HapticFeedback.selectionClick();
+              setState(() => _dragging = list[i].id);
+            },
+            onReorderEnd: (_) {
+              HapticFeedback.lightImpact();
+              setState(() => _dragging = null);
+            },
+            // まとめて動かすときは、持ち上げたページに枚数を出す
+            proxyDecorator: (child, i, _) {
+              final n = _dragGroupSize(list[i]);
+              return Material(
+                color: Colors.transparent,
+                elevation: 6,
+                child: n < 2
+                    ? child
+                    : Badge(
+                        label: Text('$nページ'),
+                        offset: const Offset(-16, -2),
+                        child: child,
+                      ),
               );
             },
+            itemBuilder: (context, i) => _buildReorderItem(theme, list, i),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildReorderItem(ThemeData theme, List<MusicPage> list, int i) {
+    final p = list[i];
+    final moved = p.index != i;
+    final selected = _selected.contains(p.id);
+    // ドラッグ中のページと一緒に運ばれる選択中ページは薄くする
+    final carried = selected &&
+        _dragging != null &&
+        _dragging != p.id &&
+        _selected.contains(_dragging);
+    return ReorderableDelayedDragStartListener(
+      key: ValueKey<String>(p.id),
+      index: i,
+      child: Opacity(
+        opacity: carried ? 0.35 : 1,
+        child: Card(
+          clipBehavior: Clip.antiAlias,
+          shape: selected
+              ? RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: theme.colorScheme.primary, width: 2),
+                )
+              : null,
+          child: InkWell(
+            onTap: () => _toggleSelected(p),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(0, 8, 4, 8),
+              child: Row(
+                children: <Widget>[
+                  Checkbox(
+                    value: selected,
+                    onChanged: (_) => _toggleSelected(p),
+                  ),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: SizedBox(
+                      width: 66,
+                      height: 88,
+                      child: Image.file(
+                        File(p.thumbPath),
+                        fit: BoxFit.cover,
+                        cacheWidth: 160,
+                        frameBuilder: fadeInImageFrame,
+                        errorBuilder: (_, _, _) => Container(
+                          color: theme.colorScheme.surfaceContainerHighest,
+                          child: const Icon(Icons.broken_image_outlined),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text('${i + 1}ページ目',
+                            style: theme.textTheme.titleMedium),
+                        if (moved)
+                          Text('元は ${p.index + 1}ページ目',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.primary)),
+                      ],
+                    ),
+                  ),
+                  ReorderableDragStartListener(
+                    index: i,
+                    child: const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Icon(Icons.drag_handle),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 選択中のページを先頭・末尾へまとめて送るバー (遠くへ動かすときにドラッグしなくて済む)。
+  Widget _buildSelectionBar(ThemeData theme) {
+    return Material(
+      color: theme.colorScheme.surfaceContainerHigh,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 4, 4),
+          child: Row(
+            children: <Widget>[
+              Expanded(child: Text('${_selected.length}ページを選択中')),
+              TextButton.icon(
+                icon: const Icon(Icons.vertical_align_top),
+                label: const Text('先頭へ'),
+                onPressed: () => _moveSelectedTo(start: true),
+              ),
+              TextButton.icon(
+                icon: const Icon(Icons.vertical_align_bottom),
+                label: const Text('末尾へ'),
+                onPressed: () => _moveSelectedTo(start: false),
+              ),
+              IconButton(
+                tooltip: '選択を解除',
+                icon: const Icon(Icons.close),
+                onPressed: () => setState(_selected.clear),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -387,6 +517,9 @@ class _DocumentScreenState extends State<_DocumentView> {
           body: reorder != null
               ? _buildReorderList(theme, reorder)
               : _buildPages(theme, pages),
+          bottomNavigationBar: reorder != null && _selected.isNotEmpty
+              ? _buildSelectionBar(theme)
+              : null,
         ),
       ),
     );
